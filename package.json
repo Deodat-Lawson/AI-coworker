@@ -1,0 +1,29 @@
+{
+  "name": "ai-coworker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal AI coworkers that meet with each other on your behalf.",
+  "workspaces": [
+    "packages/shared",
+    "packages/agent",
+    "packages/server",
+    "packages/desktop"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "npm run build --workspace @ai-coworker/shared && npm run build --workspace @ai-coworker/agent && npm run build --workspace @ai-coworker/server && npm run build --workspace @ai-coworker/desktop",
+    "build:core": "npm run build --workspace @ai-coworker/shared && npm run build --workspace @ai-coworker/agent && npm run build --workspace @ai-coworker/server",
+    "typecheck": "tsc -b packages/shared packages/agent packages/server",
+    "server": "npm run start --workspace @ai-coworker/server",
+    "desktop": "npm run dev --workspace @ai-coworker/desktop",
+    "agent": "npm run cli --workspace @ai-coworker/agent --",
+    "demo": "node scripts/demo.mjs",
+    "test": "node --test \"tests/*.test.mjs\"",
+    "dist": "npm run build && npm run dist --workspace @ai-coworker/desktop"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

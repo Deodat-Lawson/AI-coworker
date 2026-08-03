@@ -1,0 +1,55 @@
+{
+  "name": "@ai-coworker/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI Coworker desktop app",
+  "main": "dist/main/main.cjs",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "node scripts/build.mjs && vite build",
+    "start": "electron .",
+    "typecheck": "tsc --noEmit",
+    "dist": "electron-builder --publish never",
+    "clean": "rm -rf dist release"
+  },
+  "dependencies": {
+    "@ai-coworker/agent": "*",
+    "@ai-coworker/shared": "*"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.24.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "vite": "^5.4.11"
+  },
+  "build": {
+    "appId": "dev.aicoworker.desktop",
+    "productName": "AI Coworker",
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage",
+      "category": "Office"
+    }
+  }
+}
