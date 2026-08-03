@@ -1,4 +1,6 @@
 export { Workspace, emptyProfile, DEFAULT_WORKING_HOURS } from './store.js';
+export { Vault, parseQuery } from './vault.js';
+export type { Bookmark, SearchOptions } from './vault.js';
 export { PersonalAgent } from './agent.js';
 export type { PersonalAgentOptions, LiveMeetingState, AgentActivity } from './agent.js';
 export { RelayClient } from './relay-client.js';

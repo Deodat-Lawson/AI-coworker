@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
-import type { AppState, DesktopApi } from './ipc.js';
+import type { AppState, DesktopApi, VaultState } from './ipc.js';
 
 /**
  * The only surface the renderer gets. No node, no filesystem, no sockets —
@@ -34,6 +34,29 @@ const api: DesktopApi = {
     const listener = (_event: unknown, state: AppState) => handler(state);
     ipcRenderer.on('state', listener);
     return () => ipcRenderer.removeListener('state', listener);
+  },
+
+  vaultState: () => ipcRenderer.invoke('vault:state'),
+  vaultRead: (path) => ipcRenderer.invoke('vault:read', path),
+  vaultWrite: (path, content) => ipcRenderer.invoke('vault:write', path, content),
+  vaultCreate: (path, content) => ipcRenderer.invoke('vault:create', path, content),
+  vaultCreateFolder: (path) => ipcRenderer.invoke('vault:createFolder', path),
+  vaultRename: (from, to) => ipcRenderer.invoke('vault:rename', from, to),
+  vaultDelete: (path) => ipcRenderer.invoke('vault:delete', path),
+  vaultSearch: (query, options) => ipcRenderer.invoke('vault:search', query, options),
+  vaultSaveSettings: (patch) => ipcRenderer.invoke('vault:settings', patch),
+  vaultSaveBookmarks: (items) => ipcRenderer.invoke('vault:bookmarks', items),
+  vaultDailyNote: () => ipcRenderer.invoke('vault:daily'),
+  vaultMentions: (path) => ipcRenderer.invoke('vault:mentions', path),
+  vaultTemplate: (templatePath, title) => ipcRenderer.invoke('vault:template', templatePath, title),
+  vaultSaveAttachment: (name, dataBase64) => ipcRenderer.invoke('vault:attachment', name, dataBase64),
+  vaultReveal: (path) => ipcRenderer.invoke('vault:reveal', path),
+  vaultOpenExternal: (url) => ipcRenderer.invoke('vault:openExternal', url),
+  vaultExport: (path, format, html) => ipcRenderer.invoke('vault:export', path, format, html),
+  onVaultChange: (handler: (state: VaultState) => void) => {
+    const listener = (_event: unknown, state: VaultState) => handler(state);
+    ipcRenderer.on('vault:changed', listener);
+    return () => ipcRenderer.removeListener('vault:changed', listener);
   },
 };
 

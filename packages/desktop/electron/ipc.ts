@@ -12,11 +12,36 @@ import type {
   Profile,
   Project,
   PublicProfile,
+  SearchHit,
   Task,
   TranscriptEntry,
   MeetingPhase,
   Meeting,
+  VaultSettings,
+  VaultSnapshot,
 } from '@ai-coworker/shared';
+
+/** Mirrors the vault's bookmark record; declared here to keep the renderer node-free. */
+export interface VaultBookmark {
+  type: 'file' | 'folder' | 'search' | 'graph' | 'heading' | 'block';
+  path?: string;
+  subpath?: string;
+  query?: string;
+  title?: string;
+  ctime: number;
+}
+
+export interface VaultState extends VaultSnapshot {
+  settings: VaultSettings;
+  bookmarks: VaultBookmark[];
+}
+
+export interface VaultSearchOptions {
+  caseSensitive?: boolean;
+  wholeWord?: boolean;
+  limit?: number;
+  folder?: string;
+}
 
 /** Mirrors the agent's activity entry; declared here so the renderer needs no node deps. */
 export interface AgentActivity {
@@ -127,4 +152,27 @@ export interface DesktopApi {
   chooseWorkspaceDir(): Promise<IpcResult<string | null>>;
   openWorkspaceDir(): Promise<IpcResult>;
   onState(handler: (state: AppState) => void): () => void;
+
+  // --- vault -----------------------------------------------------------------
+  vaultState(): Promise<IpcResult<VaultState>>;
+  vaultRead(path: string): Promise<IpcResult<string>>;
+  vaultWrite(path: string, content: string): Promise<IpcResult>;
+  vaultCreate(path: string, content?: string): Promise<IpcResult<string>>;
+  vaultCreateFolder(path: string): Promise<IpcResult<string>>;
+  vaultRename(from: string, to: string): Promise<IpcResult<{ path: string; updated: string[] }>>;
+  vaultDelete(path: string): Promise<IpcResult>;
+  vaultSearch(query: string, options?: VaultSearchOptions): Promise<IpcResult<SearchHit[]>>;
+  vaultSaveSettings(patch: Partial<VaultSettings>): Promise<IpcResult<VaultSettings>>;
+  vaultSaveBookmarks(items: VaultBookmark[]): Promise<IpcResult>;
+  vaultDailyNote(): Promise<IpcResult<string>>;
+  /** Notes that name this one in prose without linking to it. */
+  vaultMentions(path: string): Promise<IpcResult<{ from: string; line: number; context: string }[]>>;
+  vaultTemplate(templatePath: string, title: string): Promise<IpcResult<string>>;
+  /** Store a pasted or dropped file in the attachment folder; returns its path. */
+  vaultSaveAttachment(name: string, dataBase64: string): Promise<IpcResult<string>>;
+  vaultReveal(path: string): Promise<IpcResult>;
+  vaultOpenExternal(url: string): Promise<IpcResult>;
+  /** Export a note; returns the file written, or null if the user cancelled. */
+  vaultExport(path: string, format: 'pdf' | 'html' | 'md', html?: string): Promise<IpcResult<string | null>>;
+  onVaultChange(handler: (state: VaultState) => void): () => void;
 }

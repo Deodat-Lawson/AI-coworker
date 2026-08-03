@@ -1,13 +1,25 @@
-import { randomUUID } from 'node:crypto';
-
 import type { CalendarBlock, TimeSlot, WorkingHours } from './domain.js';
 
 export const MINUTE = 60_000;
 export const HOUR = 60 * MINUTE;
 export const DAY = 24 * HOUR;
 
+/**
+ * The Web Crypto API, which both Node 20+ and the renderer provide. Reaching
+ * for `node:crypto` here would stop this module bundling for the desktop UI,
+ * which now shares the vault index with the agent.
+ */
 export function id(prefix: string): string {
-  return `${prefix}_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
+  const webCrypto = (globalThis as {
+    crypto?: { randomUUID?(): string; getRandomValues?(array: Uint8Array): Uint8Array };
+  }).crypto;
+  if (webCrypto?.randomUUID) {
+    return `${prefix}_${webCrypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
+  }
+  const bytes = new Uint8Array(8);
+  if (webCrypto?.getRandomValues) webCrypto.getRandomValues(bytes);
+  else for (let i = 0; i < bytes.length; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+  return `${prefix}_${[...bytes].map((b) => b.toString(16).padStart(2, '0')).join('')}`;
 }
 
 export function clamp(n: number, min: number, max: number): number {

@@ -32,8 +32,14 @@ import {
   type Task,
   type TranscriptEntry,
   type Visibility,
+  type FrontmatterValue,
+  hashUnit,
   id,
+  isMarkdown,
+  parseNoteMeta,
   slugify,
+  splitFrontmatter,
+  stringifyYaml,
 } from '@ai-coworker/shared';
 
 interface DbShape {
@@ -84,50 +90,56 @@ async function writeJsonAtomic(file: string, value: unknown): Promise<void> {
 
 // --- Minimal frontmatter handling (no YAML dependency) ---------------------
 
-function serializeNote(note: Note): string {
-  const fm = [
-    '---',
-    `id: ${note.id}`,
-    `title: ${escapeScalar(note.title)}`,
-    `kind: ${note.kind}`,
-    `visibility: ${note.visibility}`,
-    note.projectId ? `projectId: ${note.projectId}` : null,
-    `tags: ${note.tags.join(', ')}`,
-    `createdAt: ${note.createdAt}`,
-    `updatedAt: ${note.updatedAt}`,
-    '---',
-    '',
-  ]
-    .filter((l) => l !== null)
-    .join('\n');
-  return `${fm}${note.body.trimEnd()}\n`;
+/** Frontmatter keys this store owns; everything else on a note is the user's. */
+const OWNED_KEYS = ['id', 'title', 'kind', 'visibility', 'projectId', 'tags', 'createdAt', 'updatedAt'];
+
+function serializeNote(note: Note, extra: Record<string, FrontmatterValue> = {}): string {
+  const fm: Record<string, FrontmatterValue> = {
+    id: note.id,
+    title: note.title.replace(/\r?\n/g, ' ').trim(),
+    kind: note.kind,
+    visibility: note.visibility,
+    ...(note.projectId ? { projectId: note.projectId } : {}),
+    tags: note.tags,
+    createdAt: note.createdAt,
+    updatedAt: note.updatedAt,
+    // Properties the user added by hand survive a write from the agent.
+    ...Object.fromEntries(Object.entries(extra).filter(([k]) => !OWNED_KEYS.includes(k))),
+  };
+  return `---\n${stringifyYaml(fm)}\n---\n\n${note.body.trimEnd()}\n`;
 }
 
-function escapeScalar(value: string): string {
-  // Keep it on one line; the parser splits on the first colon only.
-  return value.replace(/\r?\n/g, ' ').trim();
-}
-
-function parseNote(raw: string, fallbackId: string): Note | null {
-  const match = /^---\n([\s\S]*?)\n---\n?/.exec(raw);
-  if (!match) return null;
-  const body = raw.slice(match[0].length);
-  const fields: Record<string, string> = {};
-  for (const line of match[1]!.split('\n')) {
-    const idx = line.indexOf(':');
-    if (idx === -1) continue;
-    fields[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
-  }
-  const now = Date.now();
+/**
+ * Read a note from a vault file.
+ *
+ * A file written by this app carries `id`, `kind` and timestamps. A file
+ * written by hand — or by any other editor pointed at the same folder — carries
+ * none of that, and must still load: the title comes from the first heading or
+ * the filename, and the id is derived from the path so it stays stable across
+ * reloads.
+ */
+function parseNote(raw: string, relPath: string, stat: { mtime: number; ctime: number }): Note {
+  const { frontmatter, lines } = splitFrontmatter(raw);
+  const body = lines ? raw.split('\n').slice(lines).join('\n').replace(/^\n/, '') : raw;
+  const meta = parseNoteMeta(relPath, raw, stat);
+  const str = (key: string): string | undefined => {
+    const value = frontmatter[key];
+    return typeof value === 'string' || typeof value === 'number' ? String(value) : undefined;
+  };
+  const num = (key: string): number | undefined => {
+    const value = Number(str(key));
+    return Number.isFinite(value) && value > 0 ? value : undefined;
+  };
   return {
-    id: fields.id || fallbackId,
-    title: fields.title || 'Untitled',
-    kind: (fields.kind as Note['kind']) || 'update',
-    visibility: (fields.visibility as Visibility) || 'team',
-    projectId: fields.projectId || undefined,
-    tags: fields.tags ? fields.tags.split(',').map((t) => t.trim()).filter(Boolean) : [],
-    createdAt: Number(fields.createdAt) || now,
-    updatedAt: Number(fields.updatedAt) || now,
+    id: str('id') || `note-${hashUnit(relPath).toString(36).slice(2, 10)}${relPath.length}`,
+    path: relPath,
+    title: meta.title,
+    kind: (str('kind') as Note['kind']) || 'reference',
+    visibility: (str('visibility') as Visibility) || 'team',
+    projectId: str('projectId') || undefined,
+    tags: meta.tags,
+    createdAt: num('createdAt') ?? stat.ctime,
+    updatedAt: num('updatedAt') ?? stat.mtime,
     body,
   };
 }
@@ -161,6 +173,8 @@ export class Workspace extends EventEmitter {
   private notesMap = new Map<string, Note>();
   private meetingsMap = new Map<string, MeetingRecord>();
   private noteFiles = new Map<string, string>();
+  /** Frontmatter the user wrote that this store does not own, kept for round trips. */
+  private noteExtras = new Map<string, Record<string, FrontmatterValue>>();
   private writeQueue: Promise<void> = Promise.resolve();
 
   private constructor(root: string, profile: Profile, db: DbShape) {
@@ -199,16 +213,42 @@ export class Workspace extends EventEmitter {
     return ws;
   }
 
-  private async loadNotes(): Promise<void> {
-    const dir = path.join(this.root, 'notes');
-    const entries = await fs.readdir(dir).catch(() => [] as string[]);
-    for (const file of entries) {
-      if (!file.endsWith('.md')) continue;
-      const raw = await fs.readFile(path.join(dir, file), 'utf8');
-      const note = parseNote(raw, id('note'));
-      if (!note) continue;
+  /** The vault root. Notes live here, in any arrangement of folders. */
+  get vaultDir(): string {
+    return path.join(this.root, 'notes');
+  }
+
+  /** Re-read every note from disk. Called after the vault is edited directly. */
+  async reloadNotes(): Promise<void> {
+    this.notesMap.clear();
+    this.noteFiles.clear();
+    this.noteExtras.clear();
+    await this.loadNotes();
+    this.emit('change', 'notes');
+  }
+
+  private async loadNotes(rel = ''): Promise<void> {
+    const dir = path.join(this.vaultDir, rel);
+    const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue;
+      const relPath = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        await this.loadNotes(relPath);
+        continue;
+      }
+      if (!isMarkdown(relPath)) continue;
+      const abs = path.join(this.vaultDir, relPath);
+      const raw = await fs.readFile(abs, 'utf8').catch(() => null);
+      if (raw === null) continue;
+      const stat = await fs.stat(abs).catch(() => null);
+      const note = parseNote(raw, relPath, {
+        mtime: stat?.mtimeMs ?? Date.now(),
+        ctime: stat?.birthtimeMs || stat?.ctimeMs || Date.now(),
+      });
       this.notesMap.set(note.id, note);
-      this.noteFiles.set(note.id, file);
+      this.noteFiles.set(note.id, relPath);
+      this.noteExtras.set(note.id, splitFrontmatter(raw).frontmatter);
     }
   }
 
@@ -365,7 +405,8 @@ export class Workspace extends EventEmitter {
     const file = this.noteFiles.get(noteId);
     this.notesMap.delete(noteId);
     this.noteFiles.delete(noteId);
-    if (file) await fs.rm(path.join(this.root, 'notes', file), { force: true });
+    this.noteExtras.delete(noteId);
+    if (file) await fs.rm(path.join(this.vaultDir, file), { force: true });
     this.emit('change', 'notes');
   }
 
@@ -542,14 +583,28 @@ export class Workspace extends EventEmitter {
 
   private saveNote(note: Note): Promise<void> {
     return this.enqueue(async () => {
-      const desired = `${slugify(note.title)}-${note.id.slice(-6)}.md`;
       const previous = this.noteFiles.get(note.id);
-      if (previous && previous !== desired) {
-        await fs.rm(path.join(this.root, 'notes', previous), { force: true });
-      }
+      // A note that already has a home keeps it — the vault owns file layout,
+      // and renaming behind the user's back would break their links.
+      const desired = note.path ?? previous ?? this.freeNotePath(`${slugify(note.title)}.md`);
       this.noteFiles.set(note.id, desired);
-      await fs.writeFile(path.join(this.root, 'notes', desired), serializeNote(note), 'utf8');
+      note.path = desired;
+      const abs = path.join(this.vaultDir, desired);
+      await fs.mkdir(path.dirname(abs), { recursive: true });
+      await fs.writeFile(abs, serializeNote(note, this.noteExtras.get(note.id) ?? {}), 'utf8');
     });
+  }
+
+  /** First unused file name for a new note. */
+  private freeNotePath(name: string): string {
+    const taken = new Set(this.noteFiles.values());
+    if (!taken.has(name)) return name;
+    const stem = name.replace(/\.md$/, '');
+    for (let i = 1; i < 500; i += 1) {
+      const candidate = `${stem} ${i}.md`;
+      if (!taken.has(candidate)) return candidate;
+    }
+    return `${stem}-${id('n').slice(-6)}.md`;
   }
 
   private writeMeeting(record: MeetingRecord): Promise<void> {

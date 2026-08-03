@@ -52,6 +52,19 @@ export default function App() {
     return <Onboarding state={state} />;
   }
 
+  // The vault workspace runs its own layout edge to edge; everything else sits
+  // in the standard padded column.
+  if (view === 'knowledge') {
+    return (
+      <div className="app">
+        <Sidebar state={state} view={view} onView={setView} />
+        <main className="main is-full">
+          <Knowledge state={state} />
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="app">
       <Sidebar state={state} view={view} onView={setView} />
@@ -65,7 +78,6 @@ export default function App() {
               onOpenMeeting={setOpenMeetingId}
             />
           )}
-          {view === 'knowledge' && <Knowledge state={state} />}
           {view === 'people' && <People state={state} />}
           {view === 'agent' && <AgentChat state={state} />}
           {view === 'settings' && <Settings state={state} />}
