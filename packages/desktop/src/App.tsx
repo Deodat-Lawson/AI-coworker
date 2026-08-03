@@ -29,6 +29,7 @@ import MeetingView from './views/MeetingView.js';
 import People from './views/People.js';
 import SearchPanel from './views/SearchPanel.js';
 import Settings from './views/Settings.js';
+import Sources from './views/Sources.js';
 import Today from './views/Today.js';
 
 type Dialog =
@@ -333,6 +334,7 @@ export default function App() {
               <MeetingView state={state} openMeetingId={openMeetingId} onOpenMeeting={setOpenMeetingId} />
             )}
             {section === 'knowledge' && <Knowledge state={state} />}
+            {section === 'sources' && <Sources state={state} />}
             {section === 'people' && <People state={state} />}
             {section === 'agent' && <AgentChat state={state} />}
             {section === 'settings' && <Settings state={state} />}

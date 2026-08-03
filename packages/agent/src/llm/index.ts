@@ -11,6 +11,7 @@ export {
   parseRetryDelayMs,
 } from './gemini.js';
 export { MockProvider } from './mock.js';
+export { renderDigest } from './prompt.js';
 
 export interface ProviderChoice {
   provider: LLMProvider;

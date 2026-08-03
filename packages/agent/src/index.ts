@@ -13,3 +13,13 @@ export { WorkspaceBook } from './workspaces.js';
 export type { WorkspaceState, DiscoverableWorkspace } from './workspaces.js';
 export type { AgentNotification } from './agent.js';
 export type { ClientState } from './store.js';
+export * from './memory/index.js';
+export {
+  CONNECTORS,
+  connectorContext,
+  connectorFor,
+  detectSources,
+  inspectFolder,
+  DEFAULT_LIMITS,
+} from './connectors/index.js';
+export type { Connector, ConnectorContext, ConnectorLimits, ReadOptions } from './connectors/index.js';

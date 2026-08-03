@@ -159,12 +159,15 @@ earliest slot they all share. If there isn't one, it says so instead of guessing
 
 ```
 packages/
-  shared/    domain model, workspace model, message markup, wire protocol
-  agent/     knowledge base, Gemini/offline brain, relay connections,
-             workspace replica, meeting logic
+  shared/    domain model, workspace model, message markup, sharing rules,
+             wire protocol
+  agent/     knowledge base, imported memory + connectors, Gemini/offline
+             brain, relay connections, workspace replica, meeting logic
   server/    relay: workspace hub, scheduling, meeting-room moderator
   desktop/   Electron app — the agent runs in the main process
-tests/       protocol, moderator, knowledge base, workspaces, 3-agent meeting
+docs/        how sources and sharing work
+tests/       protocol, moderator, knowledge base, workspaces, markup, memory,
+             recall, access, and a full 3-agent meeting
 scripts/     the five-person demo
 ```
 
@@ -177,6 +180,8 @@ profile.json     who you are, your hours, your standing instructions to your age
 db.json          projects, artifacts, tasks, calendar, feedback
 notes/*.md       markdown notes with frontmatter — the "NB files"
 meetings/*.json  transcripts and your own briefings
+memory/          what your other agents already knew, imported and classified
+client.json      which relays to dial, drafts, per-channel notification choices
 ```
 
 **Standing instructions** are how you keep control without attending. They go

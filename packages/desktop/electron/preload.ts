@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 import type { AppState, DesktopApi } from './ipc.js';
+import { MEMORY_CHANNELS, type MemoryApi, type MemoryState } from './memory-ipc.js';
 
 /**
  * The only surface the renderer gets. No node, no filesystem, no sockets —
@@ -91,4 +92,25 @@ const api: DesktopApi = {
   },
 };
 
+/** Connectors and sharing policy. Separate surface, separate channels. */
+const memory: MemoryApi = {
+  getMemoryState: () => ipcRenderer.invoke(MEMORY_CHANNELS.state),
+  syncMemory: (options) => ipcRenderer.invoke(MEMORY_CHANNELS.sync, options),
+  setSourceEnabled: (sourceId, enabled) => ipcRenderer.invoke(MEMORY_CHANNELS.setEnabled, sourceId, enabled),
+  connectSource: (sourceId) => ipcRenderer.invoke(MEMORY_CHANNELS.connect, sourceId),
+  connectFolder: () => ipcRenderer.invoke(MEMORY_CHANNELS.connectFolder),
+  disconnectSource: (sourceId, purge) => ipcRenderer.invoke(MEMORY_CHANNELS.disconnect, sourceId, purge),
+  setSensitivity: (recordId, sensitivity) => ipcRenderer.invoke(MEMORY_CHANNELS.sensitivity, recordId, sensitivity),
+  grant: (recordId, selector) => ipcRenderer.invoke(MEMORY_CHANNELS.grant, recordId, selector),
+  revoke: (recordId, selector) => ipcRenderer.invoke(MEMORY_CHANNELS.revoke, recordId, selector),
+  forget: (recordId) => ipcRenderer.invoke(MEMORY_CHANNELS.forget, recordId),
+  previewAudience: (address) => ipcRenderer.invoke(MEMORY_CHANNELS.preview, address),
+  onMemoryState: (handler: (state: MemoryState) => void) => {
+    const listener = (_event: unknown, state: MemoryState) => handler(state);
+    ipcRenderer.on(MEMORY_CHANNELS.push, listener);
+    return () => ipcRenderer.removeListener(MEMORY_CHANNELS.push, listener);
+  },
+};
+
 contextBridge.exposeInMainWorld('api', api);
+contextBridge.exposeInMainWorld('memory', memory);

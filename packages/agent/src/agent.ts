@@ -17,6 +17,7 @@ import {
   type Presence,
   type ProposedTask,
   type PublicProfile,
+  type RequesterContext,
   type SearchResults,
   type ServerMessage,
   type Task,
@@ -35,6 +36,7 @@ import {
   id,
   isDirect,
   messagePreview,
+  requesterFromProfile,
   truncate,
 } from '@ai-coworker/shared';
 
@@ -43,10 +45,13 @@ import {
   type ChatOutput,
   type KnowledgeDigest,
   type LLMProvider,
+  type RecalledMemory,
   type ToolSpec,
   createProvider,
   describeGeminiError,
 } from './llm/index.js';
+import { detectSources } from './connectors/index.js';
+import { MemoryIndex } from './memory/index.js';
 import type { RelayClient, ConnectionState } from './relay-client.js';
 import { RelayNetwork } from './relay-network.js';
 import { KnowledgeBase } from './store.js';
@@ -59,6 +64,11 @@ export interface PersonalAgentOptions {
   /** Emitted alongside the provider so the UI can explain why it is offline. */
   providerReason?: string;
   autoConnect?: boolean;
+  /**
+   * Memory imported from this person's other agents. Optional: an agent with no
+   * index behaves exactly as it did before, it just knows less.
+   */
+  memory?: MemoryIndex;
 }
 
 /** Something worth interrupting the person for. */
@@ -91,6 +101,9 @@ export interface AgentActivity {
   text: string;
 }
 
+/** Stands in when a meeting digest is built without saying who is in the room. */
+const UNKNOWN_LISTENER: RequesterContext = { address: 'unknown@unknown', relation: 'external' };
+
 /**
  * The personal AI. It owns one person's knowledge base, speaks for them in
  * agent-to-agent meetings, and reports back afterwards.
@@ -99,6 +112,8 @@ export class PersonalAgent extends EventEmitter {
   readonly knowledge: KnowledgeBase;
   readonly network: RelayNetwork;
   readonly workspaces = new WorkspaceBook();
+  /** What the person's other agents already knew. Undefined until connected. */
+  memory?: MemoryIndex;
   provider: LLMProvider;
   providerReason: string;
 
@@ -118,6 +133,7 @@ export class PersonalAgent extends EventEmitter {
   constructor(options: PersonalAgentOptions) {
     super();
     this.knowledge = options.knowledge;
+    this.memory = options.memory;
     const chosen = options.provider
       ? { provider: options.provider, reason: options.providerReason ?? 'provider supplied' }
       : createProvider();
@@ -219,7 +235,11 @@ export class PersonalAgent extends EventEmitter {
    * Build the view of the knowledge base an agent will reason over.
    * `audience: 'self'` includes private material; anything else does not.
    */
-  digest(audience: 'self' | 'meeting' = 'self', limits = { notes: 12, artifacts: 12, tasks: 15 }): KnowledgeDigest {
+  digest(
+    audience: 'self' | 'meeting' = 'self',
+    limits = { notes: 12, artifacts: 12, tasks: 15, memories: 8 },
+    context: { room?: RequesterContext[]; query?: string } = {},
+  ): KnowledgeDigest {
     const visible = <T extends { visibility: string }>(items: T[]) =>
       audience === 'self' ? items : items.filter((i) => i.visibility !== 'private');
 
@@ -233,7 +253,48 @@ export class PersonalAgent extends EventEmitter {
       feedbackLines: this.knowledge.feedback
         .slice(0, 5)
         .map((f) => `${f.from}: ${truncate(f.text, 200)}`),
+      recalled: this.recall({
+        text: context.query,
+        // An empty room means "nobody else is listening", which would hand over
+        // everything. A meeting digest built without a room is a caller that
+        // forgot, not an empty room, so it is judged against a stranger.
+        room: audience === 'meeting' ? (context.room ?? [UNKNOWN_LISTENER]) : undefined,
+        limit: limits.memories ?? 8,
+      }),
     };
+  }
+
+  /**
+   * Imported memory, filtered for whoever will hear it.
+   *
+   * Passing a `room` is what makes the permission model real: the decision is
+   * taken against every agent present, and the strictest answer wins. Without a
+   * room this is the owner's own view, which is the only time everything is
+   * readable.
+   */
+  recall(options: { text?: string; room?: RequesterContext[]; limit?: number } = {}): RecalledMemory[] {
+    if (!this.memory) return [];
+    const hits = this.memory.query({
+      owner: this.knowledge.profile,
+      room: options.room,
+      text: options.text,
+      limit: options.limit ?? 8,
+    });
+    return hits.map((hit) => ({
+      title: hit.shared.title,
+      level: hit.shared.level === 'full' ? 'full' : 'gist',
+      body: hit.shared.body,
+      gist: hit.shared.gist,
+      source: hit.record.sourceLabel,
+      reason: hit.decision.reason,
+    }));
+  }
+
+  /** Turn the meeting's participants into the audience the policy is judged against. */
+  private roomContext(participants: PublicProfile[]): RequesterContext[] {
+    return participants
+      .filter((p) => p.address !== this.knowledge.address)
+      .map((p) => requesterFromProfile(p));
   }
 
   private artifactRefs(ids: string[]): ArtifactRef[] {
@@ -559,7 +620,24 @@ export class PersonalAgent extends EventEmitter {
         turnKind: turn.turnKind,
         instruction: turn.instruction,
         transcript: state.transcript,
-        digest: this.digest('meeting'),
+        // The room decides what may be recalled, and what the meeting is
+        // *about* decides which memories are worth looking for at all.
+        digest: this.digest(
+          'meeting',
+          { notes: 12, artifacts: 12, tasks: 15, memories: 8 },
+          {
+            room: this.roomContext(participants),
+            query: [
+              state.meeting.title,
+              state.meeting.purpose,
+              turn.instruction,
+              turn.question?.text,
+              ...state.transcript.slice(-3).map((entry) => entry.text),
+            ]
+              .filter(Boolean)
+              .join(' '),
+          },
+        ),
         participants,
         question: turn.question,
         pendingTasks: turn.pendingTasks?.map((t) => ({
@@ -1083,7 +1161,7 @@ export class PersonalAgent extends EventEmitter {
         self: this.knowledge.profile,
         message,
         history: this.chatHistory.slice(-12),
-        digest: this.digest('self'),
+        digest: this.digest('self', { notes: 12, artifacts: 12, tasks: 15, memories: 8 }, { query: message }),
         directory: this.directory,
         upcoming: this.knowledge.upcomingMeetings().map((m) => ({
           title: m.meeting.title,
@@ -1376,6 +1454,26 @@ export class PersonalAgent extends EventEmitter {
         name: 'catch_me_up',
         description:
           'Summarize what your human missed: unread channels, direct messages and mentions across every workspace.',
+        input_schema: { type: 'object', properties: {}, required: [] },
+      },
+      {
+        name: 'recall_memory',
+        description:
+          "Search memory imported from your human's other agents (Claude Code, Codex, OpenClaw, Hermes). " +
+          'Pass `audience` to see what you would actually be allowed to say to a specific person.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            query: str('What to look for'),
+            audience: str('Optional: a name or agent address to test the sharing rules against'),
+          },
+          required: ['query'],
+        },
+      },
+      {
+        name: 'memory_sources',
+        description:
+          'Report which of your human\'s other agents are connected, how fresh each one is, and what was found on this machine but never imported.',
         input_schema: { type: 'object', properties: {}, required: [] },
       },
     ];
@@ -1839,6 +1937,45 @@ export class PersonalAgent extends EventEmitter {
           .join('\n');
       }
 
+      // --- imported memory --------------------------------------------------
+
+      case 'recall_memory': {
+        if (!this.memory) return 'No other agents are connected yet, so there is no imported memory to search.';
+
+        // With an audience, answer the question the human actually cares about:
+        // not "what do I know" but "what would I say to them".
+        const audienceNeedle = s('audience');
+        let requester: RequesterContext | undefined;
+        if (audienceNeedle) {
+          const address = this.resolveAddress(audienceNeedle);
+          const profile = address ? this.directoryMap.get(address) : undefined;
+          requester = profile
+            ? requesterFromProfile(profile)
+            : { address: address ?? audienceNeedle };
+        }
+
+        const hits = this.memory.query({
+          owner: this.knowledge.profile,
+          requester,
+          text: s('query'),
+          limit: 8,
+        });
+        if (!hits.length) {
+          return requester
+            ? `Nothing I could share with ${requester.address} on that.`
+            : 'Nothing in imported memory matches that.';
+        }
+        return hits
+          .map((hit) => {
+            const provenance = `${hit.record.sourceLabel}${hit.record.origin.project ? ` · ${hit.record.origin.project}` : ''}`;
+            if (hit.shared.level === 'full') {
+              return `- ${hit.shared.title} [${provenance}]\n    ${truncate((hit.shared.body ?? '').replace(/\s+/g, ' '), 300)}`;
+            }
+            return `- WITHHELD: ${hit.shared.gist ?? hit.shared.title} [${provenance}]\n    ${hit.decision.reason}`;
+          })
+          .join('\n');
+      }
+
       case 'invite_to_workspace': {
         const state = this.resolveWorkspace(s('workspace'));
         if (!state) return 'Not in any workspace yet.';
@@ -1870,6 +2007,33 @@ export class PersonalAgent extends EventEmitter {
           if (rows.length) lines.push(`${state.workspace.icon} ${state.workspace.name}`, ...rows);
         }
         return lines.length ? lines.join('\n') : 'Nothing unread anywhere.';
+      }
+
+      case 'memory_sources': {
+        if (!this.memory) return 'No memory index is open for this knowledge base.';
+        const coverage = this.memory.coverage(await detectSources());
+        const lines = [
+          `${coverage.active} memories from ${coverage.byKind.length} tool(s)` +
+            (coverage.quarantined ? `, ${coverage.quarantined} quarantined as credentials` : '') +
+            '.',
+          ...coverage.byKind.map(
+            (k) =>
+              `- ${k.kind}: ${k.memories} memories from ${k.sources} source(s)` +
+              (k.lastSyncAt ? `, last synced ${formatTime(k.lastSyncAt, this.knowledge.profile.timezone)}` : ', never synced'),
+          ),
+          coverage.unconnected.length
+            ? `\nFound on this machine but not connected:\n${coverage.unconnected
+                .map((s) => `- ${s.label} (${s.detail})`)
+                .join('\n')}`
+            : '',
+          coverage.staleSources.length
+            ? `\nNot synced recently:\n${coverage.staleSources.map((s) => `- ${s.label}`).join('\n')}`
+            : '',
+          coverage.failing.length
+            ? `\nCould not be read:\n${coverage.failing.map((s) => `- ${s.label}: ${s.errors.join('; ')}`).join('\n')}`
+            : '',
+        ];
+        return lines.filter(Boolean).join('\n');
       }
 
       default:

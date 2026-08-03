@@ -5,7 +5,17 @@ import { isDirect, statusIsLive } from '@ai-coworker/shared';
 import type { AppState, ChannelView, WorkspaceView } from '../lib/api.js';
 import { Avatar, Popover } from './ui.js';
 
-export type Section = 'chat' | 'activity' | 'threads' | 'today' | 'meetings' | 'knowledge' | 'people' | 'agent' | 'settings';
+export type Section =
+  | 'chat'
+  | 'activity'
+  | 'threads'
+  | 'today'
+  | 'meetings'
+  | 'knowledge'
+  | 'sources'
+  | 'people'
+  | 'agent'
+  | 'settings';
 
 interface Props {
   state: AppState;
@@ -194,6 +204,7 @@ export default function ChannelSidebar({
             accent={state.live.length > 0 ? 'live' : undefined}
           />
           <AppRow label="Knowledge" active={section === 'knowledge'} onClick={() => onSection('knowledge')} />
+          <AppRow label="Sources" active={section === 'sources'} onClick={() => onSection('sources')} />
           <AppRow label="People" active={section === 'people'} onClick={() => onSection('people')} />
           <AppRow label="Ask your agent" active={section === 'agent'} onClick={() => onSection('agent')} />
           <AppRow label="Settings" active={section === 'settings'} onClick={() => onSection('settings')} />

@@ -10,6 +10,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+  MemoryIndex,
   PersonalAgent,
   KnowledgeBase,
   PERSONAS,
@@ -50,6 +51,7 @@ import type {
   ThreadView,
   WorkspaceView,
 } from './ipc.js';
+import { MEMORY_CHANNELS, buildMemoryState, registerMemoryIpc } from './memory-ipc.js';
 
 const DEFAULT_RELAY = process.env.AI_COWORKER_RELAY || 'ws://localhost:8787';
 
@@ -64,6 +66,8 @@ interface Config {
 let mainWindow: BrowserWindow | null = null;
 let knowledge: KnowledgeBase | null = null;
 let agent: PersonalAgent | null = null;
+/** Memory imported from this person's other agents, beside the knowledge base. */
+let memoryIndex: MemoryIndex | null = null;
 let config: Config = {};
 let chatEntries: ChatEntry[] = [];
 let pushTimer: NodeJS.Timeout | null = null;
@@ -406,11 +410,38 @@ function updateBadge(): void {
   else app.setBadgeCount?.(mentions);
 }
 
+// --- imported memory ---------------------------------------------------------
+
+/** Imported memory rides its own channel: it changes on syncs, not on turns. */
+function pushMemoryState(): void {
+  void buildMemoryState(memoryDeps)
+    .then((state) => mainWindow?.webContents.send(MEMORY_CHANNELS.push, state))
+    .catch(() => {});
+}
+
+const memoryDeps = {
+  getIndex: () => memoryIndex,
+  getOwner: () => knowledge?.profile ?? null,
+  lookup: (address: string) => {
+    const profile = agent?.directory.find(
+      (p) => p.address.toLowerCase() === address.toLowerCase().trim(),
+    );
+    return profile
+      ? { address: profile.address, role: profile.role, team: profile.team, manager: profile.manager }
+      : null;
+  },
+  push: (state: Awaited<ReturnType<typeof buildMemoryState>>) => {
+    mainWindow?.webContents.send(MEMORY_CHANNELS.push, state);
+  },
+};
+
 // --- agent lifecycle ---------------------------------------------------------
 
 async function startAgent(dir: string): Promise<void> {
   await stopAgent();
   knowledge = await KnowledgeBase.open(dir);
+  memoryIndex = await MemoryIndex.open(dir);
+  memoryIndex.on('change', () => pushMemoryState());
   if (!knowledge.profile.address) {
     // Nothing to run yet — the renderer will show onboarding.
     pushState();
@@ -425,6 +456,7 @@ async function startAgent(dir: string): Promise<void> {
     relayUrl: config.relayUrl ?? DEFAULT_RELAY,
     provider,
     providerReason: reason,
+    memory: memoryIndex,
   });
 
   for (const event of [
@@ -453,6 +485,11 @@ async function stopAgent(): Promise<void> {
   if (agent) {
     await agent.shutdown();
     agent = null;
+  }
+  if (memoryIndex) {
+    await memoryIndex.flush();
+    memoryIndex.removeAllListeners();
+    memoryIndex = null;
   }
   knowledge = null;
 }
@@ -493,6 +530,7 @@ function handle<Args extends unknown[], T>(
 
 function registerIpc(): void {
   ipcMain.handle('state:get', () => buildState());
+  registerMemoryIpc(memoryDeps);
 
   handle<[SetupInput], void>('setup', async (input) => {
     const dir = input.knowledgeDir || defaultKnowledgeDir();

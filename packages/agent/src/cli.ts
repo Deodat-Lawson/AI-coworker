@@ -11,11 +11,19 @@ import path from 'node:path';
 import os from 'node:os';
 import process from 'node:process';
 
-import { formatTime } from '@ai-coworker/shared';
+import {
+  SENSITIVITY_ORDER,
+  decideAccess,
+  formatSelector,
+  formatTime,
+  truncate,
+} from '@ai-coworker/shared';
 
 import { PersonalAgent } from './agent.js';
+import { detectSources, inspectFolder } from './connectors/index.js';
 import { loadEnvFromAncestors } from './env.js';
 import { createProvider } from './llm/index.js';
+import { MemoryIndex, syncMemory } from './memory/index.js';
 
 // Pick up GEMINI_API_KEY from a .env beside the repo before anything reads it.
 loadEnvFromAncestors();
@@ -24,17 +32,23 @@ import { KnowledgeBase } from './store.js';
 
 interface Args {
   command: string;
+  /** Positional tokens after the command, e.g. `memory sync` → ["sync"]. */
+  rest: string[];
   flags: Record<string, string | boolean>;
 }
 
 function parseArgs(argv: string[]): Args {
-  const [command = 'help', ...rest] = argv;
+  const [command = 'help', ...tail] = argv;
   const flags: Record<string, string | boolean> = {};
-  for (let i = 0; i < rest.length; i++) {
-    const token = rest[i]!;
-    if (!token.startsWith('--')) continue;
+  const rest: string[] = [];
+  for (let i = 0; i < tail.length; i++) {
+    const token = tail[i]!;
+    if (!token.startsWith('--')) {
+      rest.push(token);
+      continue;
+    }
     const key = token.slice(2);
-    const next = rest[i + 1];
+    const next = tail[i + 1];
     if (next && !next.startsWith('--')) {
       flags[key] = next;
       i++;
@@ -42,7 +56,7 @@ function parseArgs(argv: string[]): Args {
       flags[key] = true;
     }
   }
-  return { command, flags };
+  return { command, rest, flags };
 }
 
 function str(flags: Args['flags'], key: string, fallback = ''): string {
@@ -225,6 +239,228 @@ async function cmdSeed(flags: Args['flags']): Promise<void> {
   console.log(`Seeded ${persona.profile.displayName} at ${dir}`);
 }
 
+// --- memory ------------------------------------------------------------------
+
+/**
+ * The pipeline from a terminal. Everything the desktop app does with imported
+ * memory is available here, because a headless agent on a server has the same
+ * three questions: what is on this machine, what did I take from it, and who am
+ * I allowed to tell.
+ */
+async function cmdMemory(args: Args): Promise<void> {
+  const sub = args.rest[0] ?? 'status';
+  const dir = str(args.flags, 'dir') || defaultDir(str(args.flags, 'persona'));
+  const ws = await KnowledgeBase.open(dir);
+  const index = await MemoryIndex.open(dir);
+  // Access decisions need someone to be relative to; an un-onboarded knowledge
+  // base still has an owner, it just has no name yet.
+  const owner = ws.profile.address
+    ? ws.profile
+    : { ...ws.profile, address: 'me@local', reports: [] as string[] };
+
+  switch (sub) {
+    case 'sources': {
+      const detected = await detectSources();
+      const connected = new Map(index.sources.map((s) => [s.id, s]));
+      console.log(`Detected ${detected.length} source(s) on this machine:\n`);
+      for (const source of detected) {
+        const state = connected.get(source.id);
+        const status = !state
+          ? 'not connected'
+          : !state.enabled
+            ? 'disabled'
+            : state.lastSyncAt
+              ? `synced ${formatTime(state.lastSyncAt, ws.profile.timezone)}`
+              : 'connected, never synced';
+        console.log(`  ${source.id}\n    ${source.label} — ${source.detail}\n    ${status}`);
+      }
+      const missing = index.sources.filter((s) => !detected.some((d) => d.id === s.id));
+      if (missing.length) {
+        console.log('\nConnected but not found right now:');
+        for (const state of missing) console.log(`  ${state.id} (${state.root})`);
+      }
+      break;
+    }
+
+    case 'connect': {
+      const folder = str(args.flags, 'folder') || args.rest[1];
+      if (!folder) throw new Error('Pass --folder <path> to connect a directory of memories.');
+      const source = await inspectFolder(folder);
+      if (!source) throw new Error(`No MEMORY.md, AGENTS.md or memory/ directory under ${folder}`);
+      await index.connectSource(source, true);
+      await index.flush();
+      console.log(`Connected ${source.label} (${source.detail}). Run "memory sync" to import it.`);
+      break;
+    }
+
+    case 'disconnect': {
+      const sourceId = str(args.flags, 'source') || args.rest[1] || '';
+      if (!sourceId) throw new Error('Pass --source <id>. See "memory sources".');
+      const purge = Boolean(args.flags.purge);
+      const removed = await index.removeSource(sourceId, { purge });
+      await index.flush();
+      console.log(purge ? `Disconnected ${sourceId} and forgot ${removed} memories.` : `Disconnected ${sourceId}.`);
+      break;
+    }
+
+    case 'sync': {
+      const report = await syncMemory(index, {
+        full: Boolean(args.flags.full),
+        only: str(args.flags, 'source') ? [str(args.flags, 'source')] : undefined,
+        autoConnect: args.flags['no-connect'] ? false : true,
+        onProgress: (message) => console.log(`  ${message}`),
+      });
+      const t = report.totals;
+      console.log(
+        `\n${t.added} new, ${t.updated} updated, ${t.unchanged} unchanged, ${t.duplicates} duplicate, ` +
+          `${t.rejected} skipped, ${t.quarantined} quarantined in ${t.durationMs}ms`,
+      );
+      if (t.errors.length) console.log(`problems:\n${t.errors.map((e) => `  - ${e}`).join('\n')}`);
+      if (report.discovered.length) {
+        console.log(`\nFound but not connected:\n${report.discovered.map((d) => `  - ${d.id}`).join('\n')}`);
+      }
+      break;
+    }
+
+    case 'list': {
+      const audience = str(args.flags, 'as');
+      const hits = index.query({
+        owner,
+        requester: audience ? { address: audience, role: str(args.flags, 'role') as never, team: str(args.flags, 'team') } : undefined,
+        text: str(args.flags, 'query') || args.rest.slice(1).join(' '),
+        limit: Number(str(args.flags, 'limit', '20')) || 20,
+      });
+      if (!hits.length) {
+        console.log(audience ? `Nothing I would share with ${audience}.` : 'Nothing matches.');
+        break;
+      }
+      for (const hit of hits) {
+        const tag = hit.shared.level === 'full' ? '   ' : ' ✋';
+        console.log(`${tag} ${hit.record.id}  [${hit.record.policy.sensitivity}] ${hit.record.title}`);
+        console.log(`      ${hit.record.sourceLabel} · ${hit.record.policy.topics.join(', ')}`);
+        if (hit.shared.level !== 'full') console.log(`      withheld: ${hit.decision.reason}`);
+      }
+      break;
+    }
+
+    case 'show': {
+      const recordId = str(args.flags, 'id') || args.rest[1] || '';
+      const record = index.record(recordId);
+      if (!record) throw new Error(`No memory with id ${recordId}`);
+      console.log(`${record.title}\n`);
+      console.log(`  id          ${record.id}`);
+      console.log(`  from        ${record.sourceLabel} (${record.origin.path ?? record.externalId})`);
+      console.log(`  sensitivity ${record.policy.sensitivity}${record.policy.pinned ? ' (set by you)' : ' (auto)'}`);
+      console.log(`  topics      ${record.policy.topics.join(', ')}`);
+      console.log(`  why         ${record.policy.rationale}`);
+      if (record.policy.allow.length) console.log(`  allow       ${record.policy.allow.map(formatSelector).join(', ')}`);
+      if (record.policy.deny.length) console.log(`  deny        ${record.policy.deny.map(formatSelector).join(', ')}`);
+      console.log(`  status      ${record.status}\n`);
+      console.log(record.body);
+      break;
+    }
+
+    case 'policy': {
+      const recordId = str(args.flags, 'id') || args.rest[1] || '';
+      if (!index.record(recordId)) throw new Error(`No memory with id ${recordId}`);
+      const sensitivity = str(args.flags, 'sensitivity');
+      if (sensitivity) {
+        if (!SENSITIVITY_ORDER.includes(sensitivity as never)) {
+          throw new Error(`Sensitivity must be one of: ${SENSITIVITY_ORDER.join(', ')}`);
+        }
+        await index.setPolicy(recordId, { sensitivity: sensitivity as never });
+      }
+      for (const selector of str(args.flags, 'allow').split(',').map((s) => s.trim()).filter(Boolean)) {
+        if (!(await index.grant(recordId, selector))) throw new Error(`Could not parse audience "${selector}"`);
+      }
+      for (const selector of str(args.flags, 'deny').split(',').map((s) => s.trim()).filter(Boolean)) {
+        if (!(await index.revoke(recordId, selector))) throw new Error(`Could not parse audience "${selector}"`);
+      }
+      await index.flush();
+      const updated = index.record(recordId)!;
+      console.log(
+        `${updated.title}\n  sensitivity ${updated.policy.sensitivity}\n` +
+          `  allow       ${updated.policy.allow.map(formatSelector).join(', ') || '(default)'}\n` +
+          `  deny        ${updated.policy.deny.map(formatSelector).join(', ') || '(none)'}`,
+      );
+      break;
+    }
+
+    case 'forget': {
+      const recordId = str(args.flags, 'id') || args.rest[1] || '';
+      const record = index.record(recordId);
+      if (!record) throw new Error(`No memory with id ${recordId}`);
+      await index.forget(recordId);
+      await index.flush();
+      console.log(`Forgot "${record.title}".`);
+      break;
+    }
+
+    case 'ask': {
+      // "If Dana asked me this, what would I say?" — the whole permission model
+      // in one command.
+      const audience = str(args.flags, 'as');
+      if (!audience) throw new Error('Pass --as <agent address> to test what you would share.');
+      const question = str(args.flags, 'query') || args.rest.slice(1).join(' ');
+      const requester = {
+        address: audience,
+        role: (str(args.flags, 'role') || undefined) as never,
+        team: str(args.flags, 'team') || undefined,
+      };
+      const hits = index.query({ owner, requester, text: question, limit: 10 });
+      console.log(`If ${audience} asked "${question}":\n`);
+      if (!hits.length) {
+        console.log('  I would say I have nothing on that for them.');
+        break;
+      }
+      for (const hit of hits) {
+        if (hit.shared.level === 'full') {
+          console.log(`  SHARE   ${hit.record.title}\n          ${truncate(hit.shared.body ?? '', 200)}`);
+        } else {
+          console.log(`  WITHOLD ${hit.shared.gist}\n          ${hit.decision.reason}`);
+        }
+      }
+      const blocked = index.records.filter((r) => {
+        if (r.status !== 'active') return false;
+        const decision = decideAccess(r.policy, { owner, requester });
+        return decision.level === 'none';
+      });
+      console.log(`\n  ${blocked.length} memories would not be mentioned at all.`);
+      break;
+    }
+
+    case 'status':
+    default: {
+      const coverage = index.coverage(await detectSources());
+      console.log(`${coverage.active} memories (${coverage.quarantined} quarantined) in ${dir}/memory\n`);
+      for (const row of coverage.byKind) {
+        console.log(
+          `  ${row.kind.padEnd(12)} ${String(row.memories).padStart(4)} memories  ${row.sources} source(s)  ` +
+            (row.lastSyncAt ? formatTime(row.lastSyncAt, ws.profile.timezone) : 'never synced'),
+        );
+      }
+      if (coverage.bySensitivity.length) {
+        console.log(`\n  ${coverage.bySensitivity.map((s) => `${s.count} ${s.level}`).join(', ')}`);
+      }
+      if (coverage.unconnected.length) {
+        console.log('\n  Not connected yet:');
+        for (const source of coverage.unconnected) console.log(`    - ${source.label} (${source.detail})`);
+      }
+      if (coverage.staleSources.length) {
+        console.log('\n  Stale:');
+        for (const source of coverage.staleSources) console.log(`    - ${source.label}`);
+      }
+      if (coverage.failing.length) {
+        console.log('\n  Could not be read:');
+        for (const source of coverage.failing) console.log(`    - ${source.label}: ${source.errors.join('; ')}`);
+      }
+      break;
+    }
+  }
+
+  await index.flush();
+}
+
 function usage(): void {
   console.log(`ai-coworker-agent — run a personal AI agent headlessly
 
@@ -236,21 +472,37 @@ function usage(): void {
 
   seed   --persona <key> [--dir <path>]
 
+  memory <subcommand> [--dir <path>] [--persona <key>]
+         status                      what is connected, what is not, how fresh
+         sources                     every memory store found on this machine
+         sync [--full] [--source id] import what changed (connects new sources)
+         connect --folder <path>     add any directory of memory files
+         disconnect --source <id> [--purge]
+         list [--query text] [--as <address>] [--limit n]
+         show --id <memory id>
+         policy --id <id> [--sensitivity public|internal|confidential|restricted|secret]
+                          [--allow team:platform,dana@acme] [--deny role:ic]
+         ask --as <address> --query "what about revenue"
+         forget --id <memory id>
+
 Personas: ${PERSONAS.map((p) => `${p.key} (${p.profile.displayName})`).join(', ')}
 `);
 }
 
 async function main(): Promise<void> {
-  const { command, flags } = parseArgs(process.argv.slice(2));
-  switch (command) {
+  const args = parseArgs(process.argv.slice(2));
+  switch (args.command) {
     case 'run':
-      await cmdRun(flags);
+      await cmdRun(args.flags);
       break;
     case 'chat':
-      await cmdChat(flags);
+      await cmdChat(args.flags);
       break;
     case 'seed':
-      await cmdSeed(flags);
+      await cmdSeed(args.flags);
+      break;
+    case 'memory':
+      await cmdMemory(args);
       break;
     default:
       usage();
