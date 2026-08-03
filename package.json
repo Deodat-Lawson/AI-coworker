@@ -15,7 +15,7 @@
   "scripts": {
     "build": "npm run build --workspace @ai-coworker/shared && npm run build --workspace @ai-coworker/agent && npm run build --workspace @ai-coworker/server && npm run build --workspace @ai-coworker/desktop",
     "build:core": "npm run build --workspace @ai-coworker/shared && npm run build --workspace @ai-coworker/agent && npm run build --workspace @ai-coworker/server",
-    "typecheck": "tsc -b packages/shared packages/agent packages/server",
+    "typecheck": "tsc -b packages/shared packages/agent packages/server && tsc --noEmit -p packages/desktop",
     "server": "npm run start --workspace @ai-coworker/server",
     "desktop": "npm run dev --workspace @ai-coworker/desktop",
     "agent": "npm run cli --workspace @ai-coworker/agent --",

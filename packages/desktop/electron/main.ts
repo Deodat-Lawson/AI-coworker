@@ -1218,7 +1218,7 @@ app.whenReady().then(async () => {
   loadEnvFromAncestors(app.getPath('home'), 0);
   config = await loadConfig();
   const forced = devOption('AI_COWORKER_WORKSPACE');
-  if (forced) config.workspaceDir = forced;
+  if (forced) config.knowledgeDir = forced;
   registerIpc();
   createWindow();
   if (config.knowledgeDir) {
