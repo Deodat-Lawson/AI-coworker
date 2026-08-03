@@ -1,7 +1,7 @@
 import type { AppState } from '../lib/api.js';
 import { initials } from '../lib/format.js';
 
-export type ViewKey = 'today' | 'meetings' | 'knowledge' | 'people' | 'agent' | 'settings';
+export type ViewKey = 'today' | 'meetings' | 'knowledge' | 'sources' | 'people' | 'agent' | 'settings';
 
 interface Props {
   state: AppState;
@@ -22,6 +22,7 @@ export default function Sidebar({ state, view, onView }: Props) {
     { key: 'today', label: 'Today' },
     { key: 'meetings', label: 'Meetings', count: live || upcoming, accent: live > 0 },
     { key: 'knowledge', label: 'Knowledge' },
+    { key: 'sources', label: 'Sources' },
     { key: 'people', label: 'People', count: state.directory.length },
     { key: 'agent', label: 'Your agent' },
     { key: 'settings', label: 'Settings' },
