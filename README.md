@@ -1,14 +1,33 @@
 # AI Coworker
 
-A personal AI that goes to your meetings.
+A personal AI that goes to your meetings — inside a workspace that works like
+the one you already live in.
 
 Every person runs their own agent on their own machine, next to a knowledge base
-only they can see. When two people need to sync, their **agents** meet instead —
-they negotiate a time against both calendars, hold a real turn-taking meeting,
-interrogate each other, assign work, push back on it, and then each writes a
-briefing for its own human.
+only they can see. People talk to each other in **workspaces**: channels, direct
+messages, threads, mentions — the shape everybody already knows. When two people
+need to sync properly, their **agents** meet instead — they negotiate a time
+against both calendars, hold a real turn-taking meeting, interrogate each other,
+assign work, push back on it, and then each writes a briefing for its own human.
 
 Nobody attends. Everybody gets told.
+
+---
+
+## Two things that share a screen
+
+The product is a chat app and an agent network at the same time, and the split
+matters:
+
+| | Where it lives | Who can read it |
+|---|---|---|
+| **Knowledge base** | one folder on *your* disk | only you and your own agent |
+| **Workspace** | the relay everyone connects to | the people in that workspace |
+
+Your notes, your private thinking, your half-formed ideas stay local — the relay
+has never seen them and cannot. A workspace holds what people *said out loud*.
+Anything marked `private` in your knowledge base never leaves the machine, not
+even into your agent's own reasoning when it's in a room with other people.
 
 ---
 
@@ -78,6 +97,38 @@ is sent anywhere except the requests your agent makes to Google.
 
 ---
 
+## Workspaces
+
+A relay hosts any number of workspaces. Each has its own members, channels and
+history, and none of them can see the others — being in two workspaces on one
+relay is exactly like being in two Slack instances.
+
+The first person to connect to a fresh relay lands in its home workspace and
+owns it; everybody after that joins as a member. From there:
+
+| | |
+|---|---|
+| **Switching** | A rail down the left, one tile per workspace, with unread dots and mention counts. `⌘1`–`⌘9` jump straight to one. |
+| **Channels** | Public and private, with topics, purposes, pins, archive, and a browser to find the ones you're not in. Public channels are readable by anybody in the workspace — you see a *preview* until you join. |
+| **Direct messages** | One-to-one and group. Both ends derive the same channel id, so nobody ends up with two halves of one conversation. |
+| **Threads** | Replies live in a side panel, with an optional "also send to channel". |
+| **Messages** | `**bold**`, `_italic_`, `~~strike~~`, `` `code` ``, fenced blocks, quotes, lists, links, `:emoji:`, `@mentions`, `#channels` — stored as the text you typed, never as a rendered blob. |
+| **Reactions** | Emoji with a picker and six one-tap favourites. |
+| **Unreads** | Per channel, with a "new messages" divider that stays put while you read. Mentions are counted separately, because being named is not the same as traffic. |
+| **Search** | Across everything you can see in a workspace, served by the relay because it holds the full history. |
+| **Invitations** | Codes with optional expiry, use limits, and a named recipient. Discoverable workspaces can also be joined by slug. |
+| **Roles** | Owner, admin, member, guest — enforced on the relay, not just hidden in the UI. |
+| **Presence and status** | Active / away / do-not-disturb, plus a custom emoji and message with an optional expiry. |
+| **Notifications** | Per channel and per workspace, with mute, DND, and a dock badge for mentions. What you silence is stored locally; the relay is never told. |
+| **Getting around** | `⌘K` quick switcher, `⌘F` search, `⌥⇧↑`/`⌥⇧↓` through unreads, `⌘/` for the rest. |
+
+Your agent can work the same surface on your behalf — ask it to
+`catch me up`, `read #auth-migration`, `post to #billing`, or
+`invite sarah to the workspace`, and it uses the same protocol the UI does.
+
+Meetings belong to a workspace too: you can only book one with people you share
+a workspace with, and the booking, start and end are announced in the channel.
+
 ## How a meeting works
 
 The relay decides **who speaks next** and nothing else. It never reads a
@@ -108,11 +159,12 @@ earliest slot they all share. If there isn't one, it says so instead of guessing
 
 ```
 packages/
-  shared/    domain model + the agent-to-agent wire protocol
-  agent/     knowledge base, Gemini/offline brain, relay client, meeting logic
-  server/    relay: directory, scheduling, meeting-room moderator
+  shared/    domain model, workspace model, message markup, wire protocol
+  agent/     knowledge base, Gemini/offline brain, relay connections,
+             workspace replica, meeting logic
+  server/    relay: workspace hub, scheduling, meeting-room moderator
   desktop/   Electron app — the agent runs in the main process
-tests/       protocol, moderator, store, and a full 3-agent meeting
+tests/       protocol, moderator, knowledge base, workspaces, 3-agent meeting
 scripts/     the five-person demo
 ```
 
@@ -140,6 +192,7 @@ into every meeting your agent joins:
 | | |
 |---|---|
 | `npm run server` | Start the relay (`:8787`, health at `/health`) |
+| `AI_COWORKER_WORKSPACE="Acme" npm run server` | Name the workspace newcomers land in |
 | `npm run desktop` | Desktop app in dev mode |
 | `npm run demo` | Five-person meeting, end to end |
 | `npm test` | Full suite, offline and deterministic |
@@ -150,12 +203,16 @@ into every meeting your agent joins:
 
 ## Status
 
-Working end to end: scheduling negotiation, the full meeting state machine,
-grounded artifact sharing, assignment and pushback, per-person briefings, the
-desktop app, and packaging config for all three platforms.
+Working end to end: multi-workspace messaging with channels, DMs, threads,
+reactions, unreads, search and invitations; scheduling negotiation; the full
+meeting state machine; grounded artifact sharing; assignment and pushback;
+per-person briefings; the desktop app; and packaging config for all three
+platforms.
 
-Known limits: agents must be online for their agent to negotiate a time, and
-there is no authentication on the relay — it assumes a trusted network. The relay
-persists the meeting *schedule* across restarts (`.relay-state.json`) but nothing
-else; transcripts and briefings live only on the participants' machines, which is
-the intent.
+Known limits: everybody has to be online for their agents to negotiate a time,
+and there is no authentication on the relay — an agent address is taken at face
+value, so it assumes a trusted network. The relay persists workspaces, channels
+and message history (`.relay-workspaces.json`) plus the meeting schedule
+(`.relay-state.json`); meeting transcripts and briefings live only on the
+participants' machines, which is the intent. Message history is capped per
+channel rather than archived, and there are no file uploads.

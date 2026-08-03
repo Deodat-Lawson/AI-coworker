@@ -100,12 +100,28 @@ async function onlineCount() {
 
 console.log(`\n  AI Coworker — ${people.length}-person demo`);
 console.log(`  ${people.join(', ')} · chair: ${chair}`);
-console.log(`  relay ${RELAY} · data ${path.relative(root, dataDir)}\n`);
+console.log(`  relay ${RELAY} · data ${path.relative(root, dataDir)}`);
+console.log('  everyone lands in the "Northwind" workspace; open the desktop app on the same');
+console.log(`  relay to watch the channels fill up\n`);
 
 if (fresh) await fs.rm(dataDir, { recursive: true, force: true });
 await fs.mkdir(dataDir, { recursive: true });
 
-run('relay', process.execPath, ['packages/server/dist/main.js'], { PORT: String(PORT) }, 0);
+run(
+  'relay',
+  process.execPath,
+  ['packages/server/dist/main.js'],
+  {
+    PORT: String(PORT),
+    AI_COWORKER_WORKSPACE: 'Northwind',
+    // Keep the demo's workspace state beside its knowledge bases, so
+    // `--reuse` picks up where the last run left off and a fresh run starts
+    // from nothing.
+    AI_COWORKER_WORKSPACE_STATE: path.join(dataDir, 'relay-workspaces.json'),
+    AI_COWORKER_RELAY_STATE: path.join(dataDir, 'relay-schedule.json'),
+  },
+  0,
+);
 await waitForRelay();
 
 // Each person is a separate OS process with its own knowledge base directory —

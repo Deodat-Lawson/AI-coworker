@@ -45,7 +45,7 @@ test('three agents schedule and run a meeting end to end', async (t) => {
   // Every agent independently blocked the slot on its own calendar.
   for (const a of all) {
     assert.ok(
-      a.workspace.calendar.some((b) => b.meetingId === meeting.id),
+      a.knowledge.calendar.some((b) => b.meetingId === meeting.id),
       `${a.persona.key} should hold the slot on their calendar`,
     );
   }
@@ -64,7 +64,7 @@ test('three agents schedule and run a meeting end to end', async (t) => {
   }
 
   // --- the transcript ------------------------------------------------------
-  const record = dana.workspace.meeting(meeting.id);
+  const record = dana.knowledge.meeting(meeting.id);
   assert.ok(record, 'the meeting should be saved locally');
   const transcript = record.transcript;
   assert.ok(transcript.length > 8, `transcript should be substantive, got ${transcript.length}`);
@@ -111,7 +111,7 @@ test('three agents schedule and run a meeting end to end', async (t) => {
   // --- what the humans get ------------------------------------------------
   for (const assignment of assignments) {
     const target = all.find((a) => a.persona.profile.address === assignment.task.assignee);
-    const task = target.workspace.tasks.find((tk) => tk.id === assignment.task.id);
+    const task = target.knowledge.tasks.find((tk) => tk.id === assignment.task.id);
     assert.ok(task, `${target.persona.key} should have the assigned task saved locally`);
     assert.equal(task.sourceMeetingId, meeting.id);
     assert.equal(task.assignedBy, meeting.chair);
@@ -120,10 +120,10 @@ test('three agents schedule and run a meeting end to end', async (t) => {
   // The slot is released once the meeting is over.
   for (const a of all) {
     assert.ok(
-      !a.workspace.calendar.some((b) => b.meetingId === meeting.id),
+      !a.knowledge.calendar.some((b) => b.meetingId === meeting.id),
       'the calendar hold should be released after the meeting',
     );
-    assert.equal(a.workspace.meeting(meeting.id).meeting.status, 'completed');
+    assert.equal(a.knowledge.meeting(meeting.id).meeting.status, 'completed');
   }
 });
 
@@ -156,7 +156,7 @@ test('a question in the room is answered in the room', async (t) => {
   dana.agent.startMeetingNow(meeting.id);
   await ended;
 
-  const transcript = dana.workspace.meeting(meeting.id).transcript;
+  const transcript = dana.knowledge.meeting(meeting.id).transcript;
   const questions = transcript.filter((e) => e.kind === 'question');
   assert.ok(questions.length > 0, 'agents should interrogate each other');
 

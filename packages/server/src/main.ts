@@ -16,12 +16,21 @@ import { Relay } from './relay.js';
 const PORT = Number(process.env.PORT ?? process.env.AI_COWORKER_PORT ?? 8787);
 const HOST = process.env.HOST ?? '0.0.0.0';
 const STATE_FILE = process.env.AI_COWORKER_RELAY_STATE ?? path.join(process.cwd(), '.relay-state.json');
+const WORKSPACE_FILE =
+  process.env.AI_COWORKER_WORKSPACE_STATE ?? path.join(process.cwd(), '.relay-workspaces.json');
 
 function log(message: string): void {
   console.log(`[relay ${new Date().toISOString()}] ${message}`);
 }
 
-const relay = new Relay({ log });
+const relay = new Relay({
+  log,
+  hub: {
+    statePath: WORKSPACE_FILE,
+    relayName: process.env.AI_COWORKER_RELAY_NAME ?? 'AI Coworker',
+    defaultWorkspaceName: process.env.AI_COWORKER_WORKSPACE ?? 'Home',
+  },
+});
 
 /**
  * Booked meetings survive a relay restart. Only the schedule is persisted —
@@ -66,6 +75,8 @@ const server = http.createServer((req, res) => {
         ok: true,
         service: 'ai-coworker-relay',
         online: relay.onlineCount,
+        workspaces: relay.hub.size,
+        home: relay.hub.homeWorkspaceId,
         agents: relay.directory.map((a) => ({
           address: a.address,
           name: a.displayName,

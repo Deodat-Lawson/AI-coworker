@@ -31,10 +31,10 @@ export default function Knowledge({ state }: Props) {
         This is what your agent knows and what it can show other agents. Anything marked private
         never leaves this machine.
       </p>
-      {state.workspaceDir ? (
+      {state.knowledgeDir ? (
         <p className="hint">
-          Stored at <code>{state.workspaceDir}</code>{' '}
-          <button className="ghost" onClick={() => void api.openWorkspaceDir()}>
+          Stored at <code>{state.knowledgeDir}</code>{' '}
+          <button className="ghost" onClick={() => void api.openKnowledgeDir()}>
             open folder
           </button>
         </p>

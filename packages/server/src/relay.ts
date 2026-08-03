@@ -1,10 +1,13 @@
 /**
- * The relay: directory, scheduling, and meeting rooms.
+ * The relay: workspaces, scheduling, and meeting rooms.
  *
  * What it deliberately does not do: read anyone's knowledge base, summarize
  * anything, or generate a single word of meeting content. Those all belong to
- * the personal agents. The relay is closer to a switchboard plus a meeting-room
- * booking system than to a chatbot.
+ * the personal agents. The relay is closer to a switchboard plus a shared
+ * message board than to a chatbot.
+ *
+ * Workspace state lives in {@link WorkspaceHub}; this file is the transport and
+ * the meeting scheduler that sits beside it.
  */
 
 import { EventEmitter } from 'node:events';
@@ -22,9 +25,11 @@ import {
   id,
   intersectSlots,
   parseClientMessage,
+  PROTOCOL_VERSION,
 } from '@ai-coworker/shared';
 import type { WebSocket } from 'ws';
 
+import { HubError, WorkspaceHub, type HubOptions } from './hub.js';
 import { MeetingRoom } from './room.js';
 
 interface Connection {
@@ -54,13 +59,17 @@ export interface RelayOptions {
   log?: (message: string) => void;
   /** Called whenever a meeting completes, for optional persistence. */
   onMeetingEnded?: (room: MeetingRoom) => void;
+  /** Workspace storage and naming. */
+  hub?: HubOptions;
 }
 
 export class Relay extends EventEmitter {
   private connections = new Map<AgentAddress, Connection>();
   private negotiations = new Map<string, Negotiation>();
   private meetings = new Map<string, ScheduledMeeting>();
-  private options: Required<Omit<RelayOptions, 'onMeetingEnded'>> & Pick<RelayOptions, 'onMeetingEnded'>;
+  private options: Required<Omit<RelayOptions, 'onMeetingEnded' | 'hub'>> &
+    Pick<RelayOptions, 'onMeetingEnded'>;
+  readonly hub: WorkspaceHub;
 
   constructor(options: RelayOptions = {}) {
     super();
@@ -74,6 +83,8 @@ export class Relay extends EventEmitter {
       log: options.log ?? (() => {}),
       onMeetingEnded: options.onMeetingEnded,
     };
+    this.hub = new WorkspaceHub({ log: this.options.log, ...options.hub });
+    this.hub.onDeliver((to, message) => this.send(to, message));
   }
 
   get onlineCount(): number {
@@ -112,11 +123,17 @@ export class Relay extends EventEmitter {
       try {
         this.handleMessage(address, message);
       } catch (err) {
-        this.options.log(`error handling ${message.type} from ${address}: ${(err as Error).message}`);
+        // A HubError is a refusal the user should read ("that channel is
+        // archived"); anything else is a bug and gets logged as one.
+        const hubError = err instanceof HubError;
+        if (!hubError) {
+          this.options.log(`error handling ${message.type} from ${address}: ${(err as Error).message}`);
+        }
         this.sendSocket(socket, {
           type: 'error',
-          code: 'handler_error',
+          code: hubError ? (err as HubError).code : 'handler_error',
           message: (err as Error).message,
+          context: message.type,
         });
       }
     });
@@ -129,6 +146,7 @@ export class Relay extends EventEmitter {
         this.connections.delete(address);
         this.options.log(`${address} disconnected (${this.connections.size} online)`);
         for (const entry of this.meetings.values()) entry.room?.leave(address);
+        this.hub.disconnect(address);
         this.broadcastDirectory();
         this.emit('directory', this.directory);
       }
@@ -159,8 +177,16 @@ export class Relay extends EventEmitter {
       type: 'hello.ok',
       you: this.connections.get(address)!.profile,
       serverTime: Date.now(),
-      protocolVersion: '1.0.0',
+      protocolVersion: PROTOCOL_VERSION,
+      relayName: this.hub.relayName,
     });
+
+    // Everything this person belongs to, in full, before anything else arrives —
+    // the client can then draw its whole shell from one round trip.
+    for (const workspaceId of this.hub.connect(this.connections.get(address)!.profile)) {
+      this.hub.sendSnapshot(address, workspaceId);
+    }
+
     this.broadcastDirectory();
     this.emit('directory', this.directory);
 
@@ -182,6 +208,167 @@ export class Relay extends EventEmitter {
 
       case 'directory.list':
         this.send(address, { type: 'directory.update', agents: this.directory });
+        break;
+
+      // --- workspaces -------------------------------------------------------
+
+      case 'workspace.list':
+        for (const workspaceId of this.hub.workspaceIdsFor(address)) {
+          this.hub.sendSnapshot(address, workspaceId);
+        }
+        break;
+
+      case 'workspace.discover':
+        this.send(address, this.hub.discoverable(address));
+        break;
+
+      case 'workspace.create': {
+        const workspaceId = this.hub.createWorkspace(address, message);
+        this.hub.sendSnapshot(address, workspaceId);
+        break;
+      }
+
+      case 'workspace.join': {
+        const workspaceId = this.hub.joinWorkspace(address, message);
+        this.hub.sendSnapshot(address, workspaceId);
+        break;
+      }
+
+      case 'workspace.leave':
+        this.hub.leaveWorkspace(address, message.workspaceId);
+        break;
+
+      case 'workspace.update':
+        this.hub.updateWorkspace(address, message.workspaceId, message.patch);
+        break;
+
+      case 'workspace.delete':
+        this.hub.deleteWorkspace(address, message.workspaceId);
+        break;
+
+      case 'workspace.set_role':
+        this.hub.setRole(address, message.workspaceId, message.address, message.role);
+        break;
+
+      case 'workspace.remove_member':
+        this.hub.removeMember(address, message.workspaceId, message.address);
+        break;
+
+      case 'workspace.profile':
+        this.hub.setWorkspaceProfile(address, message.workspaceId, {
+          displayName: message.displayName,
+          title: message.title,
+        });
+        break;
+
+      // --- invitations ------------------------------------------------------
+
+      case 'invite.create':
+        this.hub.createInvite(address, message.workspaceId, message);
+        break;
+
+      case 'invite.revoke':
+        this.hub.revokeInvite(address, message.workspaceId, message.code);
+        break;
+
+      case 'invite.list':
+        this.send(address, this.hub.listInvites(address, message.workspaceId));
+        break;
+
+      // --- channels ---------------------------------------------------------
+
+      case 'channel.create':
+        this.hub.createChannel(address, message.workspaceId, message);
+        break;
+
+      case 'channel.update':
+        this.hub.updateChannel(address, message.workspaceId, message.channelId, message.patch);
+        break;
+
+      case 'channel.archive':
+        this.hub.archiveChannel(address, message.workspaceId, message.channelId, message.archived);
+        break;
+
+      case 'channel.join':
+        this.hub.joinChannel(address, message.workspaceId, message.channelId);
+        break;
+
+      case 'channel.leave':
+        this.hub.leaveChannel(address, message.workspaceId, message.channelId);
+        break;
+
+      case 'channel.invite':
+        this.hub.inviteToChannel(address, message.workspaceId, message.channelId, message.addresses);
+        break;
+
+      case 'channel.kick':
+        this.hub.kickFromChannel(address, message.workspaceId, message.channelId, message.address);
+        break;
+
+      case 'channel.list':
+        for (const update of this.hub.listChannels(address, message.workspaceId)) {
+          this.send(address, update);
+        }
+        break;
+
+      case 'dm.open':
+        this.hub.openDm(address, message.workspaceId, message.addresses);
+        break;
+
+      // --- messages ---------------------------------------------------------
+
+      case 'message.send':
+        this.hub.postMessage(address, message);
+        break;
+
+      case 'message.edit':
+        this.hub.editMessage(address, message.workspaceId, message.messageId, message.text);
+        break;
+
+      case 'message.delete':
+        this.hub.deleteMessage(address, message.workspaceId, message.messageId);
+        break;
+
+      case 'message.react':
+        this.hub.react(address, message.workspaceId, message.messageId, message.emoji, message.on);
+        break;
+
+      case 'message.pin':
+        this.hub.pin(address, message.workspaceId, message.messageId, message.pinned);
+        break;
+
+      case 'history.fetch':
+        this.send(
+          address,
+          this.hub.history(address, message.workspaceId, message.channelId, message.before, message.limit),
+        );
+        break;
+
+      case 'thread.fetch':
+        this.send(address, this.hub.thread(address, message.workspaceId, message.rootId));
+        break;
+
+      case 'typing':
+        this.hub.typing(address, message.workspaceId, message.channelId);
+        break;
+
+      case 'read.set':
+        this.hub.markRead(address, message.workspaceId, message.channelId, message.ts);
+        break;
+
+      case 'presence.set':
+        this.hub.setPresence(address, message.presence, message.status);
+        break;
+
+      case 'search':
+        this.send(
+          address,
+          this.hub.search(address, message.workspaceId, message.query, {
+            limit: message.limit,
+            channelId: message.channelId,
+            from: message.from,
+          }),
+        );
         break;
 
       case 'meeting.request':
@@ -272,9 +459,23 @@ export class Relay extends EventEmitter {
 
   private startNegotiation(organizer: AgentAddress, input: Omit<MeetingRequest, 'negotiationId' | 'organizer'>): void {
     const participants = [...new Set([organizer, ...input.participants])];
-    const offline = participants.filter((p) => !this.connections.has(p));
     const negotiationId = id('neg');
+    const workspaceId = this.hub.resolveMeetingWorkspace(organizer, input.workspaceId);
 
+    // A meeting happens inside one workspace: you cannot pull somebody into a
+    // room they have no membership in.
+    const outsiders = this.hub.sharesWorkspace(workspaceId, participants);
+    if (outsiders.length) {
+      this.send(organizer, {
+        type: 'meeting.failed',
+        negotiationId,
+        reason: `Not in ${this.hub.workspaceName(workspaceId)}: ${outsiders.join(', ')}. Invite them to the workspace first.`,
+        offered: {},
+      });
+      return;
+    }
+
+    const offline = participants.filter((p) => !this.connections.has(p));
     if (offline.length) {
       this.send(organizer, {
         type: 'meeting.failed',
@@ -285,7 +486,7 @@ export class Relay extends EventEmitter {
       return;
     }
 
-    const request: MeetingRequest = { ...input, participants, negotiationId, organizer };
+    const request: MeetingRequest = { ...input, workspaceId, participants, negotiationId, organizer };
     const negotiation: Negotiation = {
       request,
       replies: new Map(),
@@ -369,6 +570,8 @@ export class Relay extends EventEmitter {
     const slot = common[0]!;
     const meeting: Meeting = {
       id: id('mtg'),
+      workspaceId: request.workspaceId ?? this.hub.resolveMeetingWorkspace(request.organizer),
+      channelId: request.channelId,
       title: request.title,
       purpose: request.purpose,
       kind: request.kind,
@@ -394,7 +597,24 @@ export class Relay extends EventEmitter {
     for (const participant of meeting.participants) {
       this.send(participant, { type: 'meeting.scheduled', meeting });
     }
+    this.announceMeeting(meeting, 'meeting_scheduled', `booked *${meeting.title}* for ${formatTime(meeting.start)}`);
     this.emit('meeting.scheduled', meeting);
+  }
+
+  /** Meetings are workspace events, so they show up in the channel too. */
+  private announceMeeting(
+    meeting: Meeting,
+    event: 'meeting_scheduled' | 'meeting_started' | 'meeting_ended',
+    text: string,
+  ): void {
+    this.hub.postMeetingEvent(
+      meeting.workspaceId,
+      meeting.channelId,
+      meeting.organizer,
+      event,
+      text,
+      meeting.id,
+    );
   }
 
   // --- rooms ----------------------------------------------------------------
@@ -411,12 +631,20 @@ export class Relay extends EventEmitter {
       onEnded: (finished) => {
         entry.meeting.status = finished.phase === 'closed' ? 'completed' : 'cancelled';
         this.meetings.delete(entry.meeting.id);
+        this.announceMeeting(
+          entry.meeting,
+          'meeting_ended',
+          finished.phase === 'closed'
+            ? `*${entry.meeting.title}* finished — ${finished.transcript.length} turns on the record.`
+            : `*${entry.meeting.title}* ended early.`,
+        );
         this.options.onMeetingEnded?.(finished);
         this.emit('meeting.ended', finished);
       },
     });
     entry.room = room;
     this.options.log(`opening room for "${entry.meeting.title}"`);
+    this.announceMeeting(entry.meeting, 'meeting_started', `*${entry.meeting.title}* is under way.`);
     this.emit('meeting.live', entry.meeting);
     room.open();
   }
@@ -458,5 +686,6 @@ export class Relay extends EventEmitter {
     this.negotiations.clear();
     this.meetings.clear();
     this.connections.clear();
+    this.hub.shutdown();
   }
 }

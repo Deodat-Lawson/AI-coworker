@@ -17,13 +17,13 @@ export default function Onboarding({ state }: Props) {
   const [role, setRole] = useState<'manager' | 'ic'>('ic');
   const [focus, setFocus] = useState('');
   const [relayUrl, setRelayUrl] = useState(state.connection.relayUrl || 'ws://localhost:8787');
-  const [workspaceDir, setWorkspaceDir] = useState<string | null>(null);
+  const [knowledgeDir, setWorkspaceDir] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function chooseDir() {
     try {
-      const dir = await unwrap(api.chooseWorkspaceDir());
+      const dir = await unwrap(api.chooseKnowledgeDir());
       if (dir) setWorkspaceDir(dir);
     } catch (err) {
       setError((err as Error).message);
@@ -48,7 +48,7 @@ export default function Onboarding({ state }: Props) {
             .split(',')
             .map((f) => f.trim())
             .filter(Boolean),
-          workspaceDir: workspaceDir ?? undefined,
+          knowledgeDir: knowledgeDir ?? undefined,
           relayUrl: relayUrl.trim(),
         }),
       );
@@ -164,7 +164,7 @@ export default function Onboarding({ state }: Props) {
         <div className="field">
           <label>Knowledge base location</label>
           <div className="row">
-            <input readOnly value={workspaceDir ?? 'Default app folder'} />
+            <input readOnly value={knowledgeDir ?? 'Default app folder'} />
             <button style={{ flex: '0 0 auto' }} onClick={chooseDir}>
               Choose folder…
             </button>

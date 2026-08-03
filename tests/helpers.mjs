@@ -5,7 +5,7 @@ import path from 'node:path';
 
 import { WebSocketServer } from 'ws';
 
-import { PersonalAgent, Workspace, MockProvider, findPersona, seedWorkspace } from '../packages/agent/dist/index.js';
+import { PersonalAgent, KnowledgeBase, MockProvider, findPersona, seedKnowledgeBase } from '../packages/agent/dist/index.js';
 import { Relay } from '../packages/server/dist/index.js';
 
 /** Start an in-process relay on an ephemeral port. */
@@ -42,16 +42,16 @@ export async function startAgent(personaKey, url, root) {
   const persona = findPersona(personaKey);
   if (!persona) throw new Error(`no persona ${personaKey}`);
   const dir = root ?? (await makeTempDir(`ai-coworker-${personaKey}-`));
-  const workspace = await Workspace.open(dir);
-  await seedWorkspace(workspace, persona);
+  const knowledge = await KnowledgeBase.open(dir);
+  await seedKnowledgeBase(knowledge, persona);
   const agent = new PersonalAgent({
-    workspace,
+    knowledge,
     relayUrl: url,
     provider: new MockProvider(),
     providerReason: 'test',
   });
   await once(agent, 'connection', (state) => state === 'online');
-  return { agent, workspace, dir, persona };
+  return { agent, knowledge, dir, persona };
 }
 
 /** Wait for an event, optionally filtered by a predicate on the first argument. */
@@ -69,6 +69,17 @@ export function once(emitter, event, predicate = () => true, timeoutMs = 20_000)
     }
     emitter.on(event, handler);
   });
+}
+
+/** Wait until a predicate holds, polling. Cheaper to read than nested `once`s. */
+export async function until(predicate, message = 'condition', timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const value = predicate();
+    if (value) return value;
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${message}`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
 }
 
 /** Wait until every agent sees every other agent in the directory. */

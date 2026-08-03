@@ -7,6 +7,23 @@ interface Props {
 }
 
 export default function People({ state }: Props) {
+  // Meetings happen inside a workspace, so the people you can book with are its
+  // members — not everybody who happens to be connected to the relay.
+  const workspace = state.workspaces.find((w) => w.workspace.id === state.activeWorkspaceId);
+  const people = (workspace?.members ?? [])
+    .filter((m) => m.address !== workspace?.me.address)
+    .map((m) => ({
+      address: m.address,
+      displayName: m.displayName,
+      title: m.title,
+      team: '',
+      role: 'ic' as const,
+      bio: m.bio,
+      focusAreas: m.focusAreas,
+      timezone: m.timezone,
+      online: m.agentOnline,
+    }));
+
   const [selected, setSelected] = useState<string[]>([]);
   const [title, setTitle] = useState('');
   const [purpose, setPurpose] = useState('');
@@ -34,6 +51,7 @@ export default function People({ state }: Props) {
           kind,
           durationMins: duration,
           urgency,
+          workspaceId: workspace?.workspace.id,
           agenda: agenda
             .split('\n')
             .map((a) => a.trim())
@@ -57,18 +75,17 @@ export default function People({ state }: Props) {
     <>
       <h1>People</h1>
       <p className="subtitle">
-        Everyone whose agent is reachable on <code>{state.connection.relayUrl}</code>. You talk to your
+        Everyone in <strong>{workspace?.workspace.name ?? 'this workspace'}</strong>. You talk to your
         agent; your agent talks to theirs.
       </p>
 
-      {state.directory.length === 0 ? (
+      {people.length === 0 ? (
         <div className="empty">
-          Nobody else is online. Start the relay and have a teammate open their app — or run another
-          persona on this machine with{' '}
-          <code>npm run agent -- run --persona sarah</code>.
+          Nobody else is in this workspace yet. Invite somebody from the workspace menu — or run
+          another persona on this machine with <code>npm run agent -- run --persona sarah</code>.
         </div>
       ) : (
-        state.directory.map((person) => (
+        people.map((person) => (
           <div
             className={`card clickable ${selected.includes(person.address) ? '' : ''}`}
             key={person.address}
@@ -83,7 +100,7 @@ export default function People({ state }: Props) {
               <div>
                 <div className="card-title">
                   {person.displayName}
-                  {person.role === 'manager' ? <span className="tag accent" style={{ marginLeft: 8 }}>manager</span> : null}
+
                 </div>
                 <div className="card-sub">
                   {person.title}
@@ -118,7 +135,7 @@ export default function People({ state }: Props) {
             <p className="card-sub" style={{ marginTop: 0 }}>
               Your agent will ask{' '}
               {selected
-                .map((a) => state.directory.find((d) => d.address === a)?.displayName ?? a)
+                .map((a) => people.find((d) => d.address === a)?.displayName ?? a)
                 .join(' and ')}
               's agent for a time that works for everyone, then attend for you.
             </p>

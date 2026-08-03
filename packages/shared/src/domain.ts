@@ -177,6 +177,10 @@ export interface AgendaItem {
 
 export interface Meeting {
   id: string;
+  /** The workspace the meeting belongs to; its members are the ones who see it. */
+  workspaceId: string;
+  /** Set when the meeting was booked from a channel, so it reports back there. */
+  channelId?: string;
   title: string;
   purpose: string;
   kind: MeetingKind;
@@ -315,6 +319,10 @@ export interface TimeSlot {
 export interface MeetingRequest {
   negotiationId: string;
   organizer: AgentAddress;
+  /** Defaults to the organizer's current workspace when omitted. */
+  workspaceId?: string;
+  /** Channel the request came from; the relay announces the booking there. */
+  channelId?: string;
   participants: AgentAddress[];
   chair: AgentAddress;
   title: string;

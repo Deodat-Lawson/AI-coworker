@@ -7,6 +7,8 @@
  *   <root>/db.json          – projects, artifacts, tasks, calendar, feedback
  *   <root>/notes/*.md       – the "NB files": markdown notes with YAML-ish frontmatter
  *   <root>/meetings/*.json  – transcripts and per-person outcomes
+ *   <root>/client.json      – which relays to dial, unsent drafts, per-channel
+ *                             notification choices; nothing anyone else can see
  *
  * Notes are real markdown on disk on purpose: a person should be able to open
  * their knowledge base in any editor and have it still make sense.
@@ -29,9 +31,15 @@ import {
   type Profile,
   type Project,
   type PublicProfile,
+  type Presence,
   type Task,
   type TranscriptEntry,
+  type UserStatus,
   type Visibility,
+  type WorkspacePrefs,
+  defaultChannelPrefs,
+  defaultWorkspacePrefs,
+  emptyStatus,
   id,
   slugify,
 } from '@ai-coworker/shared';
@@ -47,7 +55,7 @@ interface DbShape {
 
 /**
  * Must be a factory, not a shared constant: a spread of a constant would give
- * every fresh workspace the *same* array instances, and separate people's
+ * every fresh knowledge base the *same* array instances, and separate people's
  * knowledge bases would silently merge.
  */
 function emptyDb(): DbShape {
@@ -61,8 +69,42 @@ function emptyDb(): DbShape {
   };
 }
 
-export interface WorkspaceEvents {
+export interface KnowledgeBaseEvents {
   change: [section: string];
+}
+
+/**
+ * Everything about *how this person uses* their workspaces, as opposed to what
+ * is in them. It never leaves the machine: the relay has no idea which channel
+ * you muted or what you half-typed and did not send.
+ */
+export interface ClientState {
+  version: number;
+  /** Relays to dial on start-up, in order. The first is the primary. */
+  relays: string[];
+  /** Per-workspace notification and sidebar choices. */
+  prefs: Record<string, WorkspacePrefs>;
+  /** Unsent text, keyed `workspaceId:channelId` (or `:threadRootId`). */
+  drafts: Record<string, string>;
+  /** Where to reopen: the last workspace, and the last channel inside each. */
+  lastWorkspace: string;
+  lastChannel: Record<string, string>;
+  /** Custom status, mirrored to every relay on connect. */
+  status: UserStatus;
+  presence: Presence;
+}
+
+function emptyClientState(): ClientState {
+  return {
+    version: 1,
+    relays: [],
+    prefs: {},
+    drafts: {},
+    lastWorkspace: '',
+    lastChannel: {},
+    status: emptyStatus(),
+    presence: 'active',
+  };
 }
 
 async function readJson<T>(file: string, fallback: T): Promise<T> {
@@ -154,7 +196,7 @@ export function emptyProfile(address: AgentAddress, displayName: string): Profil
   };
 }
 
-export class Workspace extends EventEmitter {
+export class KnowledgeBase extends EventEmitter {
   readonly root: string;
   private profileData: Profile;
   private db: DbShape;
@@ -162,6 +204,7 @@ export class Workspace extends EventEmitter {
   private meetingsMap = new Map<string, MeetingRecord>();
   private noteFiles = new Map<string, string>();
   private writeQueue: Promise<void> = Promise.resolve();
+  private clientState: ClientState = emptyClientState();
 
   private constructor(root: string, profile: Profile, db: DbShape) {
     super();
@@ -170,21 +213,21 @@ export class Workspace extends EventEmitter {
     this.db = db;
   }
 
-  static async open(root: string, seedProfile?: Profile): Promise<Workspace> {
+  static async open(root: string, seedProfile?: Profile): Promise<KnowledgeBase> {
     await fs.mkdir(path.join(root, 'notes'), { recursive: true });
     await fs.mkdir(path.join(root, 'meetings'), { recursive: true });
 
     const profileFile = path.join(root, 'profile.json');
     const fallback = seedProfile ?? emptyProfile('', '');
     const profile = await readJson<Profile>(profileFile, fallback);
-    // Backfill fields added after a workspace was first created.
+    // Backfill fields added after a knowledge base was first created.
     profile.workingHours ??= { ...DEFAULT_WORKING_HOURS };
     profile.focusAreas ??= [];
     profile.reports ??= [];
     profile.agentInstructions ??= '';
 
     const db = await readJson<DbShape>(path.join(root, 'db.json'), emptyDb());
-    // Backfill collections added after a workspace was first written.
+    // Backfill collections added after a knowledge base was first written.
     db.version ??= 1;
     db.projects ??= [];
     db.artifacts ??= [];
@@ -192,7 +235,13 @@ export class Workspace extends EventEmitter {
     db.calendar ??= [];
     db.feedback ??= [];
 
-    const ws = new Workspace(root, profile, db);
+    const ws = new KnowledgeBase(root, profile, db);
+    const client = await readJson<ClientState>(path.join(root, 'client.json'), emptyClientState());
+    ws.clientState = { ...emptyClientState(), ...client };
+    ws.clientState.prefs ??= {};
+    ws.clientState.drafts ??= {};
+    ws.clientState.lastChannel ??= {};
+    ws.clientState.relays ??= [];
     await ws.loadNotes();
     await ws.loadMeetings();
     if (seedProfile && !(await exists(profileFile))) await ws.saveProfile();
@@ -525,6 +574,81 @@ export class Workspace extends EventEmitter {
       .sort((a, b) => a.meeting.start - b.meeting.start);
   }
 
+  // --- client state --------------------------------------------------------
+
+  get client(): ClientState {
+    return this.clientState;
+  }
+
+  get relays(): string[] {
+    return [...this.clientState.relays];
+  }
+
+  async setRelays(urls: string[]): Promise<void> {
+    this.clientState.relays = [...new Set(urls.filter(Boolean))];
+    await this.saveClient();
+    this.emit('change', 'client');
+  }
+
+  prefs(workspaceId: string): WorkspacePrefs {
+    const existing = this.clientState.prefs[workspaceId];
+    if (existing) {
+      existing.channels ??= {};
+      existing.collapsed ??= [];
+      return existing;
+    }
+    const fresh = defaultWorkspacePrefs(workspaceId);
+    this.clientState.prefs[workspaceId] = fresh;
+    return fresh;
+  }
+
+  channelPrefs(workspaceId: string, channelId: string) {
+    const workspace = this.prefs(workspaceId);
+    workspace.channels[channelId] ??= defaultChannelPrefs(channelId);
+    return workspace.channels[channelId]!;
+  }
+
+  async saveWorkspacePrefs(workspaceId: string, patch: Partial<WorkspacePrefs>): Promise<void> {
+    const prefs = this.prefs(workspaceId);
+    Object.assign(prefs, patch);
+    await this.saveClient();
+    this.emit('change', 'client');
+  }
+
+  async saveChannelPrefs(
+    workspaceId: string,
+    channelId: string,
+    patch: Partial<{ notify: WorkspacePrefs['notify']; muted: boolean; starred: boolean }>,
+  ): Promise<void> {
+    Object.assign(this.channelPrefs(workspaceId, channelId), patch);
+    await this.saveClient();
+    this.emit('change', 'client');
+  }
+
+  draft(key: string): string {
+    return this.clientState.drafts[key] ?? '';
+  }
+
+  /** Drafts change on every keystroke, so this is deliberately fire-and-forget. */
+  setDraft(key: string, text: string): void {
+    if (text) this.clientState.drafts[key] = text;
+    else delete this.clientState.drafts[key];
+    void this.saveClient();
+  }
+
+  async rememberPlace(workspaceId: string, channelId?: string): Promise<void> {
+    this.clientState.lastWorkspace = workspaceId;
+    if (channelId) this.clientState.lastChannel[workspaceId] = channelId;
+    await this.saveClient();
+  }
+
+  async setStatus(status: UserStatus, presence?: Presence): Promise<void> {
+    this.clientState.status = status;
+    if (presence) this.clientState.presence = presence;
+    await this.saveClient();
+    this.emit('change', 'client');
+  }
+
   // --- persistence ---------------------------------------------------------
 
   private enqueue(work: () => Promise<void>): Promise<void> {
@@ -538,6 +662,10 @@ export class Workspace extends EventEmitter {
 
   private saveDb(): Promise<void> {
     return this.enqueue(() => writeJsonAtomic(path.join(this.root, 'db.json'), this.db));
+  }
+
+  private saveClient(): Promise<void> {
+    return this.enqueue(() => writeJsonAtomic(path.join(this.root, 'client.json'), this.clientState));
   }
 
   private saveNote(note: Note): Promise<void> {

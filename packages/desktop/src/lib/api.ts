@@ -1,5 +1,6 @@
 import type { AppState, DesktopApi, IpcResult } from '../../electron/ipc.js';
 
+
 declare global {
   interface Window {
     api: DesktopApi;
@@ -8,7 +9,14 @@ declare global {
 
 export const api = window.api;
 
-export type { AppState };
+export type {
+  ActivityItem,
+  AppState,
+  ChannelView,
+  DiscoverableWorkspaceView,
+  ThreadView,
+  WorkspaceView,
+} from '../../electron/ipc.js';
 
 /** Unwrap an IPC result, throwing the error message so callers can surface it. */
 export async function unwrap<T>(promise: Promise<IpcResult<T>>): Promise<T> {
@@ -19,7 +27,7 @@ export async function unwrap<T>(promise: Promise<IpcResult<T>>): Promise<T> {
 
 export const emptyState: AppState = {
   ready: false,
-  workspaceDir: null,
+  knowledgeDir: null,
   profile: null,
   connection: {
     state: 'offline',
@@ -44,4 +52,17 @@ export const emptyState: AppState = {
   activities: [],
   chat: [],
   personas: [],
+  workspaces: [],
+  activeWorkspaceId: '',
+  activeChannelId: '',
+  unreadFrom: 0,
+  messages: [],
+  historyComplete: true,
+  thread: null,
+  activity: [],
+  search: null,
+  discoverable: [],
+  relays: [],
+  status: { emoji: '', text: '', expiresAt: 0 },
+  presence: 'offline',
 };

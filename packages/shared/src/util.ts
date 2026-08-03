@@ -1,13 +1,19 @@
-import { randomUUID } from 'node:crypto';
-
 import type { CalendarBlock, TimeSlot, WorkingHours } from './domain.js';
 
 export const MINUTE = 60_000;
 export const HOUR = 60 * MINUTE;
 export const DAY = 24 * HOUR;
 
+/**
+ * Web Crypto rather than `node:crypto`: this module is bundled into the desktop
+ * renderer as well as the relay, and a node-only import breaks that build.
+ * Present in every Node we support and in every browser Electron ships.
+ */
 export function id(prefix: string): string {
-  return `${prefix}_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
+  const random = globalThis.crypto?.randomUUID?.();
+  if (random) return `${prefix}_${random.replace(/-/g, '').slice(0, 16)}`;
+  // Last resort: still unique enough for one process's lifetime.
+  return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
 }
 
 export function clamp(n: number, min: number, max: number): number {

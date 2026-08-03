@@ -19,8 +19,8 @@ import { createProvider } from './llm/index.js';
 
 // Pick up GEMINI_API_KEY from a .env beside the repo before anything reads it.
 loadEnvFromAncestors();
-import { PERSONAS, findPersona, seedWorkspace } from './seed.js';
-import { Workspace } from './store.js';
+import { PERSONAS, findPersona, seedKnowledgeBase } from './seed.js';
+import { KnowledgeBase } from './store.js';
 
 interface Args {
   command: string;
@@ -54,17 +54,17 @@ function defaultDir(persona: string): string {
   return path.join(os.homedir(), '.ai-coworker', persona || 'default');
 }
 
-async function openWorkspace(flags: Args['flags']): Promise<Workspace> {
+async function openKnowledge(flags: Args['flags']): Promise<KnowledgeBase> {
   const personaKey = str(flags, 'persona');
   const dir = str(flags, 'dir') || defaultDir(personaKey);
-  const ws = await Workspace.open(dir);
+  const ws = await KnowledgeBase.open(dir);
   if (personaKey) {
     const persona = findPersona(personaKey);
     if (!persona) throw new Error(`Unknown persona "${personaKey}". Known: ${PERSONAS.map((p) => p.key).join(', ')}`);
-    if (!ws.profile.address) await seedWorkspace(ws, persona);
+    if (!ws.profile.address) await seedKnowledgeBase(ws, persona);
   }
   if (!ws.profile.address) {
-    throw new Error('This workspace has no profile. Pass --persona to seed one, or use the desktop app.');
+    throw new Error('This knowledge base has no profile. Pass --persona to seed one, or use the desktop app.');
   }
   return ws;
 }
@@ -81,15 +81,15 @@ function parseRequest(spec: string): Record<string, string> {
 }
 
 async function cmdRun(flags: Args['flags']): Promise<void> {
-  const ws = await openWorkspace(flags);
+  const ws = await openKnowledge(flags);
   const relayUrl = str(flags, 'relay', process.env.AI_COWORKER_RELAY || 'ws://localhost:8787');
   const { provider, reason } = createProvider();
-  const agent = new PersonalAgent({ workspace: ws, relayUrl, provider, providerReason: reason });
+  const agent = new PersonalAgent({ knowledge: ws, relayUrl, provider, providerReason: reason });
 
   const tag = ws.profile.displayName || ws.profile.address;
   const log = (msg: string) => console.log(`[${tag}] ${msg}`);
   log(`brain: ${provider.name} (${reason})`);
-  log(`workspace: ${ws.root}`);
+  log(`knowledge base: ${ws.root}`);
 
   agent.on('connection', (state: string, error: string | null) => {
     log(`relay ${state}${error ? `: ${error}` : ''}`);
@@ -198,9 +198,9 @@ async function cmdRun(flags: Args['flags']): Promise<void> {
 }
 
 async function cmdChat(flags: Args['flags']): Promise<void> {
-  const ws = await openWorkspace(flags);
+  const ws = await openKnowledge(flags);
   const relayUrl = str(flags, 'relay', process.env.AI_COWORKER_RELAY || 'ws://localhost:8787');
-  const agent = new PersonalAgent({ workspace: ws, relayUrl });
+  const agent = new PersonalAgent({ knowledge: ws, relayUrl });
   const message = str(flags, 'message');
   if (!message) throw new Error('Pass --message "..."');
 
@@ -219,8 +219,8 @@ async function cmdSeed(flags: Args['flags']): Promise<void> {
   const persona = findPersona(personaKey);
   if (!persona) throw new Error(`Unknown persona "${personaKey}". Known: ${PERSONAS.map((p) => p.key).join(', ')}`);
   const dir = str(flags, 'dir') || defaultDir(persona.key);
-  const ws = await Workspace.open(dir);
-  await seedWorkspace(ws, persona);
+  const ws = await KnowledgeBase.open(dir);
+  await seedKnowledgeBase(ws, persona);
   await ws.flush();
   console.log(`Seeded ${persona.profile.displayName} at ${dir}`);
 }

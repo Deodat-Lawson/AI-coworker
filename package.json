@@ -20,7 +20,7 @@
     "desktop": "npm run dev --workspace @ai-coworker/desktop",
     "agent": "npm run cli --workspace @ai-coworker/agent --",
     "demo": "node scripts/demo.mjs",
-    "test": "node --test \"tests/*.test.mjs\"",
+    "test": "node --test tests/*.test.mjs",
     "dist": "npm run build && npm run dist --workspace @ai-coworker/desktop"
   },
   "devDependencies": {

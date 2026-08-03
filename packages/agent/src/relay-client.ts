@@ -4,6 +4,8 @@ import {
   type ClientMessage,
   type PublicProfile,
   type ServerMessage,
+  CLIENT_CAPABILITIES,
+  PROTOCOL_VERSION,
   parseServerMessage,
 } from '@ai-coworker/shared';
 import WebSocket from 'ws';
@@ -73,9 +75,9 @@ export class RelayClient extends EventEmitter {
       this.backoff = 500;
       this.send({
         type: 'hello',
-        protocolVersion: '1.0.0',
+        protocolVersion: PROTOCOL_VERSION,
         profile: this.options.profile(),
-        capabilities: ['meetings.v1', 'scheduling.v1', 'artifacts.v1'],
+        capabilities: CLIENT_CAPABILITIES,
       });
       this.pingTimer = setInterval(() => this.send({ type: 'ping' }), 20_000);
     });

@@ -257,13 +257,13 @@ export default function Settings({ state }: Props) {
       <h2>Knowledge base</h2>
       <div className="card">
         <p className="card-sub" style={{ marginTop: 0 }}>
-          <code>{state.workspaceDir}</code>
+          <code>{state.knowledgeDir}</code>
         </p>
         <p className="hint">
           Notes are markdown files; projects, artifacts and tasks are one JSON file. Nothing is sent
           anywhere except what your agent chooses to say in a meeting.
         </p>
-        <button onClick={() => void api.openWorkspaceDir()}>Open folder</button>
+        <button onClick={() => void api.openKnowledgeDir()}>Open folder</button>
       </div>
     </>
   );

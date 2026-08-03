@@ -8,7 +8,7 @@
 
 import { DAY, HOUR, type Profile } from '@ai-coworker/shared';
 
-import { DEFAULT_WORKING_HOURS, type Workspace } from './store.js';
+import { DEFAULT_WORKING_HOURS, type KnowledgeBase } from './store.js';
 
 export interface PersonaSeed {
   key: string;
@@ -442,8 +442,8 @@ export function findPersona(key: string): PersonaSeed | undefined {
   return PERSONAS.find((p) => p.key === lower || p.profile.address === key || p.profile.displayName.toLowerCase() === lower);
 }
 
-/** Populate a fresh workspace with a persona's world. Idempotent by project name. */
-export async function seedWorkspace(ws: Workspace, persona: PersonaSeed, now = Date.now()): Promise<void> {
+/** Populate a fresh knowledge base with a persona's world. Idempotent by project name. */
+export async function seedKnowledgeBase(ws: KnowledgeBase, persona: PersonaSeed, now = Date.now()): Promise<void> {
   await ws.updateProfile({
     ...persona.profile,
     workingHours: persona.profile.workingHours ?? { ...DEFAULT_WORKING_HOURS },

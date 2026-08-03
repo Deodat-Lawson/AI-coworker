@@ -9,4 +9,5 @@ release/
 !.env.example
 demo-data/
 .relay-state.json
+.relay-workspaces.json
 *.log

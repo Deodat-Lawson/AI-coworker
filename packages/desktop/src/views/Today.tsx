@@ -1,11 +1,11 @@
-import type { ViewKey } from '../components/Sidebar.js';
+import type { Section } from '../components/ChannelSidebar.js';
 import { api, type AppState } from '../lib/api.js';
 import { dateTimeOf, nameOf, relative, timeOf } from '../lib/format.js';
 
 interface Props {
   state: AppState;
   onOpenMeeting: (meetingId: string) => void;
-  onView: (view: ViewKey) => void;
+  onView: (view: Section) => void;
 }
 
 export default function Today({ state, onOpenMeeting, onView }: Props) {
