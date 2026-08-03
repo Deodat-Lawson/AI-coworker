@@ -11,6 +11,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import {
+  MemoryIndex,
   PersonalAgent,
   Vault,
   Workspace,
@@ -35,6 +36,7 @@ import type {
   VaultSearchOptions,
   VaultState,
 } from './ipc.js';
+import { MEMORY_CHANNELS, buildMemoryState, registerMemoryIpc } from './memory-ipc.js';
 
 const DEFAULT_RELAY = process.env.AI_COWORKER_RELAY || 'ws://localhost:8787';
 
@@ -50,10 +52,28 @@ let mainWindow: BrowserWindow | null = null;
 let workspace: Workspace | null = null;
 let vault: Vault | null = null;
 let agent: PersonalAgent | null = null;
+/** Memory imported from this person's other agents, beside the knowledge base. */
+let memoryIndex: MemoryIndex | null = null;
 let config: Config = {};
 let chatEntries: ChatEntry[] = [];
 let pushTimer: NodeJS.Timeout | null = null;
 let vaultPushTimer: NodeJS.Timeout | null = null;
+let devHooksRan = false;
+
+/**
+ * Send to the renderer, if there is still a renderer to send to. These fire
+ * from timers, so an unguarded send during teardown or a reload surfaces as an
+ * uncaught exception in the main process.
+ */
+function sendToRenderer(channel: string, payload: unknown): void {
+  const contents = mainWindow?.webContents;
+  if (!contents || contents.isDestroyed()) return;
+  try {
+    contents.send(channel, payload);
+  } catch {
+    // The frame went away between the check and the send; nothing to do.
+  }
+}
 
 function configPath(): string {
   return path.join(app.getPath('userData'), 'config.json');
@@ -95,6 +115,8 @@ function devOption(name: string): string | undefined {
 }
 
 async function runDevHooks(window: BrowserWindow): Promise<void> {
+  if (devHooksRan) return;
+  devHooksRan = true;
   const delay = Number(devOption('AI_COWORKER_CAPTURE_DELAY') ?? 2500);
   await new Promise((resolve) => setTimeout(resolve, delay));
 
@@ -222,7 +244,7 @@ function pushState(): void {
   if (pushTimer) return;
   pushTimer = setTimeout(() => {
     pushTimer = null;
-    mainWindow?.webContents.send('state', buildState());
+    sendToRenderer('state', buildState());
   }, 40);
 }
 
@@ -236,9 +258,32 @@ function pushVaultState(): void {
   vaultPushTimer = setTimeout(() => {
     vaultPushTimer = null;
     if (!vault) return;
-    mainWindow?.webContents.send('vault:changed', buildVaultState());
+    sendToRenderer('vault:changed', buildVaultState());
   }, 60);
 }
+
+/** Imported memory rides its own channel: it changes on syncs, not on turns. */
+function pushMemoryState(): void {
+  void buildMemoryState(memoryDeps)
+    .then((state) => sendToRenderer(MEMORY_CHANNELS.push, state))
+    .catch(() => {});
+}
+
+const memoryDeps = {
+  getIndex: () => memoryIndex,
+  getOwner: () => workspace?.profile ?? null,
+  lookup: (address: string) => {
+    const profile = agent?.directory.find(
+      (p) => p.address.toLowerCase() === address.toLowerCase().trim(),
+    );
+    return profile
+      ? { address: profile.address, role: profile.role, team: profile.team, manager: profile.manager }
+      : null;
+  },
+  push: (state: Awaited<ReturnType<typeof buildMemoryState>>) => {
+    sendToRenderer(MEMORY_CHANNELS.push, state);
+  },
+};
 
 // --- agent lifecycle ---------------------------------------------------------
 
@@ -256,6 +301,9 @@ async function startAgent(dir: string): Promise<void> {
     pushVaultState();
   });
 
+  memoryIndex = await MemoryIndex.open(dir);
+  memoryIndex.on('change', () => pushMemoryState());
+
   if (!workspace.profile.address) {
     // Nothing to run yet — the renderer will show onboarding.
     pushState();
@@ -270,6 +318,7 @@ async function startAgent(dir: string): Promise<void> {
     relayUrl: config.relayUrl ?? DEFAULT_RELAY,
     provider,
     providerReason: reason,
+    memory: memoryIndex,
   });
 
   for (const event of [
@@ -295,6 +344,11 @@ async function stopAgent(): Promise<void> {
   }
   vault?.close();
   vault = null;
+  if (memoryIndex) {
+    await memoryIndex.flush();
+    memoryIndex.removeAllListeners();
+    memoryIndex = null;
+  }
   workspace = null;
 }
 
@@ -338,6 +392,7 @@ function handle<Args extends unknown[], T>(
 
 function registerIpc(): void {
   ipcMain.handle('state:get', () => buildState());
+  registerMemoryIpc(memoryDeps);
 
   handle<[SetupInput], void>('setup', async (input) => {
     const dir = input.workspaceDir || defaultWorkspaceDir();
@@ -687,6 +742,10 @@ function createWindow(): void {
       void runDevHooks(mainWindow!);
     });
   }
+
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error(`renderer gone: ${details.reason} (exit ${details.exitCode})`);
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;

@@ -54,6 +54,22 @@ export function renderDigest(digest: KnowledgeDigest, opts: { includeIds?: boole
     for (const f of digest.feedbackLines) lines.push(`- ${f}`);
   }
 
+  if (digest.recalled?.length) {
+    lines.push('', '## What my human\'s other agents already knew');
+    for (const m of digest.recalled) {
+      if (m.level === 'full') {
+        lines.push(`- ${m.title} [${m.source}]\n    ${truncate(m.body?.replace(/\s+/g, ' ') ?? '', 320)}`);
+      } else {
+        // Named but not quoted, on purpose: the agent may confirm the subject
+        // and must not disclose it. Saying "I don't know" here would be a lie.
+        lines.push(
+          `- WITHHELD — ${m.gist ?? m.title} [${m.source}]\n    ${m.reason} ` +
+            'You may acknowledge that you have this and offer to ask your human to release it. Do not state its contents, figures, or names.',
+        );
+      }
+    }
+  }
+
   return lines.join('\n') || '(the knowledge base is empty)';
 }
 

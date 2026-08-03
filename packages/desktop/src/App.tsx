@@ -8,6 +8,7 @@ import Knowledge from './views/Knowledge.js';
 import MeetingView from './views/MeetingView.js';
 import People from './views/People.js';
 import Settings from './views/Settings.js';
+import Sources from './views/Sources.js';
 import Today from './views/Today.js';
 
 export default function App() {
@@ -78,6 +79,7 @@ export default function App() {
               onOpenMeeting={setOpenMeetingId}
             />
           )}
+          {view === 'sources' && <Sources state={state} />}
           {view === 'people' && <People state={state} />}
           {view === 'agent' && <AgentChat state={state} />}
           {view === 'settings' && <Settings state={state} />}

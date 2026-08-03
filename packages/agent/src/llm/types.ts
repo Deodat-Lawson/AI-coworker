@@ -25,6 +25,30 @@ export interface KnowledgeDigest {
   tasks: Task[];
   /** Recent feedback the person received, summarized as lines. */
   feedbackLines: string[];
+  /**
+   * Memory imported from this person's other agents, already filtered for
+   * whoever is going to hear the answer.
+   */
+  recalled?: RecalledMemory[];
+}
+
+/**
+ * One imported memory as the model is allowed to see it. `level: 'gist'` means
+ * the agent may say the subject exists and must not say what it contains —
+ * which is what lets it answer "I have that, but it's not mine to share here"
+ * instead of pretending to know nothing.
+ */
+export interface RecalledMemory {
+  title: string;
+  level: 'full' | 'gist';
+  /** Present only at `full`. */
+  body?: string;
+  /** Present at `gist`: the safe acknowledgement. */
+  gist?: string;
+  /** Which tool it came from, for the agent to cite. */
+  source: string;
+  /** Why it is at this level, in words the agent can repeat. */
+  reason: string;
 }
 
 export interface MeetingTurnInput {
