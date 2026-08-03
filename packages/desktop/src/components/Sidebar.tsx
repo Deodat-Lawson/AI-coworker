@@ -9,6 +9,28 @@ interface Props {
   onView: (view: ViewKey) => void;
 }
 
+/**
+ * The Stead mark: a ring broken by a gap, with a bead standing in the gap — the
+ * meeting, your absence, and the agent holding your place.
+ *
+ * Geometry is generated; it matches brand/mark.svg. Retune it in
+ * scripts/build-icons.mjs and rebuild rather than editing these numbers.
+ */
+function Mark() {
+  return (
+    <svg className="mark" viewBox="-34.43 -34.43 68.86 68.86" aria-hidden="true">
+      <path
+        d="M 21.76 -7.7 A 24.5 24.5 0 1 0 21.76 7.7"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="8.4"
+        strokeLinecap="round"
+      />
+      <circle cx="23" cy="0" r="7.2" fill="var(--accent)" />
+    </svg>
+  );
+}
+
 export default function Sidebar({ state, view, onView }: Props) {
   const openTasks = state.tasks.filter(
     (t) => t.assignee === state.profile?.address && t.status !== 'done' && t.status !== 'dropped',
@@ -40,7 +62,10 @@ export default function Sidebar({ state, view, onView }: Props) {
 
   return (
     <aside className="sidebar">
-      <div className="brand">AI Coworker</div>
+      <div className="brand">
+        <Mark />
+        <span>Stead</span>
+      </div>
       <div className="me">
         <div className="avatar">{initials(state.profile?.displayName ?? '?')}</div>
         <div className="me-text">

@@ -1,5 +1,5 @@
 /**
- * Domain model for AI Coworker.
+ * Domain model for Stead.
  *
  * Everything here lives in a person's *local* knowledge base. The agent decides
  * what to share in a meeting based on `visibility`; `private` never leaves the

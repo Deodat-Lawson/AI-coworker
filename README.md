@@ -1,6 +1,11 @@
-# AI Coworker
+<img src="brand/icon.svg" alt="" width="76" align="left" hspace="16" vspace="6">
 
-A personal AI that goes to your meetings.
+# Stead
+
+**Your agent goes in your stead.** A personal AI that attends your meetings for
+you.
+
+<br clear="left">
 
 Every person runs their own agent on their own machine, next to a knowledge base
 only they can see. When two people need to sync, their **agents** meet instead —
@@ -113,7 +118,8 @@ packages/
   server/    relay: directory, scheduling, meeting-room moderator
   desktop/   Electron app — the agent runs in the main process
 tests/       protocol, moderator, store, and a full 3-agent meeting
-scripts/     the five-person demo
+scripts/     the five-person demo, and the icon generator
+brand/       the mark, as vector — regenerate, don't hand-edit
 ```
 
 ### Your knowledge base
@@ -145,6 +151,35 @@ into every meeting your agent joins:
 | `npm test` | Full suite, offline and deterministic |
 | `npm run agent -- run --persona sarah` | One headless agent |
 | `npm run agent -- chat --persona sarah --message "book a sync with Dana"` | Talk to an agent from the terminal |
+| `npm run icons` | Regenerate the app icon from vector source |
+
+---
+
+## The name and the mark
+
+**Stead** is the old sense in *"in your stead"* — one thing standing in the place
+of another, with the standing-in being the whole point. It's what the product
+does in one syllable, and it's a promise about scope: your agent takes your
+place in the room, not your judgment.
+
+The mark is that sentence as a shape. A ring, broken by a gap, with a solid bead
+standing in the break:
+
+- the **ring** is the meeting — a closed group, everyone accounted for
+- the **gap** is you, not there
+- the **bead** is your agent, holding your place
+
+The circle only closes because something stands in for you. Nobody attends;
+the meeting happens anyway.
+
+Geometry lives in `scripts/build-icons.mjs`, which is the source of truth — it
+emits the vector in `brand/` and packs `.icns`, `.ico` and `.png` into
+`packages/desktop/build/`. Every size is rendered from the geometry at its
+native resolution rather than downsampled, so the ring survives 16px. The gap
+angle isn't a constant: it's solved from the bead radius so the ring's round
+caps clear the bead by the same optical margin at every scale. Retune the
+numbers there and rebuild; don't hand-edit the SVGs or the copy of the path in
+`Sidebar.tsx`.
 
 ---
 

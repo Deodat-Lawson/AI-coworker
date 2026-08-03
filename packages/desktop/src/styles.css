@@ -143,11 +143,22 @@ label {
 }
 
 .brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 12px;
   letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: var(--text-faint);
+  color: var(--text-dim);
   padding: 0 10px 10px;
+}
+.brand .mark {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  /* The ring inherits this; the bead keeps its accent so the stand-in reads. */
+  color: var(--text);
+  overflow: visible;
 }
 
 .me {
