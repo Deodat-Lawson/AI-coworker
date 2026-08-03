@@ -112,7 +112,7 @@ export class WorkspaceHub {
   constructor(options: HubOptions = {}) {
     this.options = {
       statePath: options.statePath,
-      relayName: options.relayName ?? 'AI Coworker relay',
+      relayName: options.relayName ?? 'Stead relay',
       defaultWorkspaceName: options.defaultWorkspaceName ?? 'Home',
       maxMessagesPerChannel: options.maxMessagesPerChannel ?? 5000,
       log: options.log ?? (() => {}),

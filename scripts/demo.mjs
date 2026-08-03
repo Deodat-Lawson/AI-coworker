@@ -98,7 +98,7 @@ async function onlineCount() {
   }
 }
 
-console.log(`\n  AI Coworker — ${people.length}-person demo`);
+console.log(`\n  Stead — ${people.length}-person demo`);
 console.log(`  ${people.join(', ')} · chair: ${chair}`);
 console.log(`  relay ${RELAY} · data ${path.relative(root, dataDir)}`);
 console.log('  everyone lands in the "Northwind" workspace; open the desktop app on the same');

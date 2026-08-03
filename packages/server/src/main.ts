@@ -27,7 +27,7 @@ const relay = new Relay({
   log,
   hub: {
     statePath: WORKSPACE_FILE,
-    relayName: process.env.AI_COWORKER_RELAY_NAME ?? 'AI Coworker',
+    relayName: process.env.AI_COWORKER_RELAY_NAME ?? 'Stead',
     defaultWorkspaceName: process.env.AI_COWORKER_WORKSPACE ?? 'Home',
   },
 });

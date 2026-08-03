@@ -865,7 +865,13 @@ function createWindow(): void {
     height: 900,
     minWidth: 1040,
     minHeight: 680,
-    title: 'AI Coworker',
+    title: 'Stead',
+    // Packaged builds get their icon from electron-builder; this is what makes
+    // the window and taskbar look right when running from source on
+    // Linux/Windows, where Electron would otherwise show its own icon.
+    ...(process.platform === 'darwin'
+      ? {}
+      : { icon: path.join(__dirname, '../../build/icon.png') }),
     backgroundColor: '#0f1115',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {

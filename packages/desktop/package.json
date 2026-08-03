@@ -2,7 +2,7 @@
   "name": "@ai-coworker/desktop",
   "version": "0.1.0",
   "private": true,
-  "description": "AI Coworker desktop app",
+  "description": "Stead desktop app",
   "main": "dist/main/main.cjs",
   "scripts": {
     "dev": "node scripts/dev.mjs",
@@ -28,28 +28,33 @@
     "vite": "^5.4.11"
   },
   "build": {
-    "appId": "dev.aicoworker.desktop",
-    "productName": "AI Coworker",
+    "appId": "app.stead.desktop",
+    "productName": "Stead",
+    "electronVersion": "33.4.11",
     "files": [
       "dist/**/*",
       "package.json"
     ],
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
     "mac": {
       "category": "public.app-category.productivity",
+      "icon": "build/icon.icns",
       "target": [
         "dmg",
         "zip"
       ]
     },
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "build/icon.ico"
     },
     "linux": {
       "target": "AppImage",
-      "category": "Office"
+      "category": "Office",
+      "icon": "build/icon.png"
     }
   }
 }

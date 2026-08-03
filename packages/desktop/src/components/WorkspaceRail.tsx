@@ -1,6 +1,28 @@
 import type { WorkspaceView } from '../../electron/ipc.js';
 import { initials } from '../lib/format.js';
 
+/**
+ * The Stead mark: a ring broken by a gap, with a bead standing in the gap — the
+ * meeting, your absence, and the agent holding your place.
+ *
+ * Geometry is generated; it matches brand/mark.svg. Retune it in
+ * scripts/build-icons.mjs and rebuild rather than editing these numbers.
+ */
+function Mark() {
+  return (
+    <svg className="mark" viewBox="-34.43 -34.43 68.86 68.86" aria-hidden="true">
+      <path
+        d="M 21.76 -7.7 A 24.5 24.5 0 1 0 21.76 7.7"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="8.4"
+        strokeLinecap="round"
+      />
+      <circle cx="23" cy="0" r="7.2" fill="var(--accent)" />
+    </svg>
+  );
+}
+
 interface Props {
   workspaces: WorkspaceView[];
   activeId: string;
@@ -21,6 +43,9 @@ export default function WorkspaceRail({ workspaces, activeId, onSwitch, onAdd }:
         <button className="rail-add" onClick={onAdd} title="Add a workspace">
           +
         </button>
+        <div className="rail-brand" title="Stead">
+          <Mark />
+        </div>
       </nav>
     );
   }
@@ -53,6 +78,9 @@ export default function WorkspaceRail({ workspaces, activeId, onSwitch, onAdd }:
       <button className="rail-add" onClick={onAdd} title="Add a workspace">
         +
       </button>
+      <div className="rail-brand" title="Stead">
+        <Mark />
+      </div>
     </nav>
   );
 }
