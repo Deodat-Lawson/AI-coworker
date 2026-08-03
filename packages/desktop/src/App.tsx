@@ -172,7 +172,10 @@ export default function App() {
         setSwitcher(true);
         return;
       }
-      if (mod && e.key.toLowerCase() === 'f') {
+      // The vault owns ⌘F while you are in it — that is its find-and-replace
+      // bar, and swapping the whole editor out for workspace search mid-edit
+      // is never what you meant.
+      if (mod && e.key.toLowerCase() === 'f' && section !== 'knowledge') {
         e.preventDefault();
         setSearching(true);
         return;
@@ -192,7 +195,8 @@ export default function App() {
         setSection('threads');
         return;
       }
-      if (mod && !e.shiftKey && e.key.toLowerCase() === 'n') {
+      // ⌘N is "new note" inside the vault, the way it is in Obsidian.
+      if (mod && !e.shiftKey && e.key.toLowerCase() === 'n' && section !== 'knowledge') {
         e.preventDefault();
         setDialog({ kind: 'new-dm' });
         return;
@@ -225,7 +229,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [state.workspaces, state.activeChannelId, workspace, switchWorkspace, openChannel]);
+  }, [state.workspaces, state.activeChannelId, workspace, switchWorkspace, openChannel, section]);
 
   if (!loaded) {
     return (
