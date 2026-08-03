@@ -280,7 +280,7 @@ export default function App() {
         ) : null}
       </div>
 
-      <main className="main">
+      <main className={section === 'knowledge' ? 'main is-full' : 'main'}>
         {searching && workspace ? (
           <SearchPanel
             state={state}
@@ -288,6 +288,10 @@ export default function App() {
             onClose={() => setSearching(false)}
             onOpenChannel={(channelId) => openChannel(workspace.workspace.id, channelId)}
           />
+        ) : section === 'knowledge' ? (
+          // The vault runs its own layout edge to edge; everything else sits in
+          // the standard padded column.
+          <Knowledge state={state} />
         ) : section === 'chat' && workspace ? (
           <Chat
             state={state}
@@ -333,7 +337,6 @@ export default function App() {
             {section === 'meetings' && (
               <MeetingView state={state} openMeetingId={openMeetingId} onOpenMeeting={setOpenMeetingId} />
             )}
-            {section === 'knowledge' && <Knowledge state={state} />}
             {section === 'sources' && <Sources state={state} />}
             {section === 'people' && <People state={state} />}
             {section === 'agent' && <AgentChat state={state} />}

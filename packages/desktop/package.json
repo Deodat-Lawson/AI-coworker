@@ -14,7 +14,9 @@
   },
   "dependencies": {
     "@ai-coworker/agent": "*",
-    "@ai-coworker/shared": "*"
+    "@ai-coworker/shared": "*",
+    "katex": "^0.16.47",
+    "mermaid": "^11.16.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",

@@ -164,14 +164,17 @@ earliest slot they all share. If there isn't one, it says so instead of guessing
 ```
 packages/
   shared/    domain model, workspace model, message markup, sharing rules,
-             wire protocol
-  agent/     knowledge base, imported memory + connectors, Gemini/offline
-             brain, relay connections, workspace replica, meeting logic
+             wire protocol, and the vault index (links, tags, graph,
+             frontmatter) — pure, so main and renderer agree
+  agent/     knowledge base, the vault on disk, imported memory + connectors,
+             Gemini/offline brain, relay connections, workspace replica,
+             meeting logic
   server/    relay: workspace hub, scheduling, meeting-room moderator
-  desktop/   Electron app — the agent runs in the main process
+  desktop/   Electron app — the agent runs in the main process; the renderer
+             holds the markdown engine, the editor, the graph and the canvas
 docs/        how sources and sharing work
 tests/       protocol, moderator, knowledge base, workspaces, markup, memory,
-             recall, access, and a full 3-agent meeting
+             recall, access, vault, markdown, and a full 3-agent meeting
 scripts/     the five-person demo, and the icon generator
 brand/       the mark, as vector — regenerate, don't hand-edit
 ```
@@ -183,11 +186,16 @@ Everything an agent knows lives in one folder you can open in any editor:
 ```
 profile.json     who you are, your hours, your standing instructions to your agent
 db.json          projects, artifacts, tasks, calendar, feedback
-notes/*.md       markdown notes with frontmatter — the "NB files"
+notes/           your vault — markdown, folders, attachments, .obsidian/ config
 meetings/*.json  transcripts and your own briefings
 memory/          what your other agents already knew, imported and classified
 client.json      which relays to dial, drafts, per-channel notification choices
 ```
+
+`notes/` is a real Obsidian vault. Point Obsidian at it and everything is where
+that app expects, including its settings; edit a note there and your agent sees
+the change immediately. The **Knowledge** tab in the desktop app is a full
+editor for it — see below.
 
 **Standing instructions** are how you keep control without attending. They go
 into every meeting your agent joins:
@@ -196,6 +204,67 @@ into every meeting your agent joins:
 > decision on refresh tokens, not a discussion. No meetings after 4pm my time."*
 
 ---
+
+## The vault
+
+The knowledge side of the app is a note-taking environment in its own right,
+built directly on the folder rather than on a database. It is deliberately
+Obsidian-shaped, because Obsidian's shape is the right one: files you own,
+links between them, and a graph that falls out of the links.
+
+**Writing.** Live Preview renders every block except the one your cursor is in,
+which stays as editable markdown — so `**bold**` shows its markers while you are
+in the line and reads as prose the moment you leave it. There is also a plain
+source mode and a reading view (`⌘E`). Markdown support covers headings, lists,
+nested lists, task checkboxes you can tick in place, tables, blockquotes,
+callouts (`> [!warning]`), footnotes, `%%comments%%`, block anchors (`^id`),
+highlights, strikethrough, fenced code with syntax highlighting for ~20
+languages, LaTeX via KaTeX, and Mermaid diagrams.
+
+**Linking.** `[[Wikilinks]]` with `|aliases`, `#headings` and `#^block`
+references, `![[embeds]]` that transclude a note or one of its sections, images,
+audio, video and PDFs. Typing `[[` opens a fuzzy suggester that can also create
+the note you are naming. Renaming a note rewrites every link that pointed at it,
+in both wiki and markdown form, and leaves prose mentions alone.
+
+**Finding.** A backlinks pane with unlinked mentions you can convert to links in
+one click, an outgoing-links list, an outline, a tag tree, bookmarks, a quick
+switcher (`⌘O`), a command palette (`⌘P`), and full-text search with the
+operators you expect: `tag:`, `path:`, `file:`, `section:`, `task:`, `"exact
+phrases"`, `-exclusions` and `/regular expressions/`.
+
+**Seeing.** A force-directed graph of the whole vault — with tags, attachments
+and unresolved links as optional node types — and a local graph of whatever note
+you are in. Canvas files (`.canvas`, the JSON Canvas format) give you an
+infinite board of cards, embedded notes, groups and arrows.
+
+**Everything else.** Tabs and split panes, a file explorer with drag-to-move,
+daily notes, templates with `{{title}}` and `{{date:…}}`, YAML properties with a
+proper editor, per-vault settings and rebindable hotkeys, light and dark themes,
+export to PDF and HTML, and a trash that a delete can be undone from.
+
+Not included: sync, publishing, mobile, and the community plugin ecosystem.
+Those are services and a platform rather than features, and this vault is a
+local folder on one machine by design.
+
+### How the editor is built, and how it is tested
+
+The document string is the model; the DOM is only ever a view of it. Every edit
+is intercepted at `beforeinput`, applied to the string, and re-rendered — the
+browser is never allowed to mutate the surface. That is not fussiness: half the
+surface is `contenteditable="false"` rendered HTML, and left to itself a
+backspace at the start of a paragraph deletes the rendered table above it and
+takes the source with it. The only exception is IME composition, which has to
+run natively and is reconciled when it ends.
+
+`npm run test:ui` launches a real window against a throwaway vault and drives it
+the way a person would — clicking file rows and rendered text, placing the
+caret, firing the same input intents a keyboard produces — then reads the files
+back through the app's own IPC. A green run means the bytes on disk are right,
+not that the screen looked plausible. It covers typing, deletion across rendered
+blocks, list and quote continuation, undo, clipboard, link completion,
+navigation, renaming with link rewriting, backlinks, search, and the graph and
+canvas views. It is kept out of `npm test` because it needs a display.
 
 ## Commands
 
@@ -206,6 +275,7 @@ into every meeting your agent joins:
 | `npm run desktop` | Desktop app in dev mode |
 | `npm run demo` | Five-person meeting, end to end |
 | `npm test` | Full suite, offline and deterministic |
+| `npm run test:ui` | End-to-end vault suite in a real window (needs a display) |
 | `npm run agent -- run --persona sarah` | One headless agent |
 | `npm run agent -- chat --persona sarah --message "book a sync with Dana"` | Talk to an agent from the terminal |
 | `npm run icons` | Regenerate the app icon from vector source |
@@ -245,7 +315,8 @@ numbers there and rebuild; don't hand-edit the SVGs or the copy of the path in
 Working end to end: multi-workspace messaging with channels, DMs, threads,
 reactions, unreads, search and invitations; scheduling negotiation; the full
 meeting state machine; grounded artifact sharing; assignment and pushback;
-per-person briefings; the desktop app; and packaging config for all three
+per-person briefings; the vault and its editor; the desktop app; and packaging
+config for all three
 platforms.
 
 Known limits: everybody has to be online for their agents to negotiate a time,

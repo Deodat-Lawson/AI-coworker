@@ -7,13 +7,21 @@ export const DAY = 24 * HOUR;
 /**
  * Web Crypto rather than `node:crypto`: this module is bundled into the desktop
  * renderer as well as the relay, and a node-only import breaks that build.
- * Present in every Node we support and in every browser Electron ships.
+ * Present in every Node we support and in every browser Electron ships. The
+ * renderer now shares the vault index with the agent, so this has to hold on
+ * both sides.
  */
 export function id(prefix: string): string {
-  const random = globalThis.crypto?.randomUUID?.();
-  if (random) return `${prefix}_${random.replace(/-/g, '').slice(0, 16)}`;
-  // Last resort: still unique enough for one process's lifetime.
-  return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+  const webCrypto = (globalThis as {
+    crypto?: { randomUUID?(): string; getRandomValues?(array: Uint8Array): Uint8Array };
+  }).crypto;
+  if (webCrypto?.randomUUID) {
+    return `${prefix}_${webCrypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
+  }
+  const bytes = new Uint8Array(8);
+  if (webCrypto?.getRandomValues) webCrypto.getRandomValues(bytes);
+  else for (let i = 0; i < bytes.length; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+  return `${prefix}_${[...bytes].map((b) => b.toString(16).padStart(2, '0')).join('')}`;
 }
 
 export function clamp(n: number, min: number, max: number): number {

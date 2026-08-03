@@ -77,6 +77,8 @@ export type NoteKind = 'update' | 'decision' | 'idea' | 'blocker' | 'meeting' | 
  */
 export interface Note {
   id: string;
+  /** Path inside the vault, relative to `<root>/notes`, e.g. "Projects/Auth.md". */
+  path?: string;
   projectId?: string;
   title: string;
   body: string;

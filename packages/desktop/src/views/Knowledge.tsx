@@ -1,20 +1,46 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
-import type { Artifact, Note, Project, Task } from '@ai-coworker/shared';
+import type { Artifact, Project, Task } from '@ai-coworker/shared';
 
 import { api, unwrap, type AppState } from '../lib/api.js';
 import { relative } from '../lib/format.js';
-
-type Tab = 'projects' | 'notes' | 'artifacts' | 'tasks';
+import ObsidianView, { type ExtraView } from '../vault/ObsidianView.js';
+import { UiProvider } from '../vault/ui.js';
 
 interface Props {
   state: AppState;
 }
 
+/**
+ * Knowledge is the vault: a folder of markdown notes with links, tags, a graph
+ * and a canvas over it. Projects, artifacts and tasks are structured records the
+ * agent needs alongside the prose, and open as their own workspace views.
+ */
 export default function Knowledge({ state }: Props) {
-  const [tab, setTab] = useState<Tab>('projects');
-  const [error, setError] = useState<string | null>(null);
+  const extras = useMemo<ExtraView[]>(
+    () => [
+      { id: 'projects', label: 'Projects', icon: '▣', render: () => <StructuredView state={state} kind="projects" /> },
+      { id: 'artifacts', label: 'Artifacts', icon: '◈', render: () => <StructuredView state={state} kind="artifacts" /> },
+      { id: 'tasks', label: 'Tasks', icon: '☑', render: () => <StructuredView state={state} kind="tasks" /> },
+    ],
+    [state],
+  );
 
+  return (
+    <UiProvider>
+      <ObsidianView extraViews={extras} />
+    </UiProvider>
+  );
+}
+
+function StructuredView({
+  state,
+  kind,
+}: {
+  state: AppState;
+  kind: 'projects' | 'artifacts' | 'tasks';
+}) {
+  const [error, setError] = useState<string | null>(null);
   const run = async (work: Promise<unknown>) => {
     try {
       await work;
@@ -25,11 +51,14 @@ export default function Knowledge({ state }: Props) {
   };
 
   return (
-    <>
-      <h1>Knowledge</h1>
+    <div className="structured">
+      <h1>{kind[0]!.toUpperCase() + kind.slice(1)}</h1>
       <p className="subtitle">
-        This is what your agent knows and what it can show other agents. Anything marked private
-        never leaves this machine.
+        {kind === 'projects'
+          ? 'Projects give every note and artifact a home.'
+          : kind === 'artifacts'
+            ? 'What your agent can show in a meeting instead of describing.'
+            : 'Work you owe someone, including anything assigned in a meeting.'}
       </p>
       {state.knowledgeDir ? (
         <p className="hint">
@@ -39,22 +68,11 @@ export default function Knowledge({ state }: Props) {
           </button>
         </p>
       ) : null}
-
-      <div className="tabs">
-        {(['projects', 'notes', 'artifacts', 'tasks'] as Tab[]).map((t) => (
-          <button key={t} className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
-            {t[0].toUpperCase() + t.slice(1)} ({state[t].length})
-          </button>
-        ))}
-      </div>
-
       {error ? <div className="error-text">{error}</div> : null}
-
-      {tab === 'projects' && <Projects state={state} run={run} />}
-      {tab === 'notes' && <Notes state={state} run={run} />}
-      {tab === 'artifacts' && <Artifacts state={state} run={run} />}
-      {tab === 'tasks' && <Tasks state={state} run={run} />}
-    </>
+      {kind === 'projects' ? <Projects state={state} run={run} /> : null}
+      {kind === 'artifacts' ? <Artifacts state={state} run={run} /> : null}
+      {kind === 'tasks' ? <Tasks state={state} run={run} /> : null}
+    </div>
   );
 }
 
@@ -147,125 +165,6 @@ function Projects({ state, run }: { state: AppState; run: Runner }) {
                 edit
               </button>
               <button className="danger" onClick={() => void run(unwrap(api.deleteProject(p.id)))}>
-                delete
-              </button>
-            </div>
-          </div>
-        ))
-      )}
-    </>
-  );
-}
-
-function Notes({ state, run }: { state: AppState; run: Runner }) {
-  const [editing, setEditing] = useState<Partial<Note> | null>(null);
-
-  return (
-    <>
-      <div className="toolbar">
-        <span className="card-meta">
-          Notes are markdown files on disk. Blockers are what your agent raises in meetings.
-        </span>
-        <button onClick={() => setEditing({ title: '', body: '', kind: 'update', visibility: 'team' })}>
-          New note
-        </button>
-      </div>
-
-      {editing ? (
-        <div className="card">
-          <div className="field">
-            <label>Title</label>
-            <input value={editing.title ?? ''} onChange={(e) => setEditing({ ...editing, title: e.target.value })} />
-          </div>
-          <div className="field">
-            <label>Body (markdown)</label>
-            <textarea
-              style={{ minHeight: 160 }}
-              value={editing.body ?? ''}
-              onChange={(e) => setEditing({ ...editing, body: e.target.value })}
-            />
-          </div>
-          <div className="row">
-            <div className="field">
-              <label>Kind</label>
-              <select
-                value={editing.kind ?? 'update'}
-                onChange={(e) => setEditing({ ...editing, kind: e.target.value as Note['kind'] })}
-              >
-                {['update', 'decision', 'idea', 'blocker', 'meeting', 'reference'].map((k) => (
-                  <option key={k} value={k}>
-                    {k}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="field">
-              <label>Project</label>
-              <select
-                value={editing.projectId ?? ''}
-                onChange={(e) => setEditing({ ...editing, projectId: e.target.value || undefined })}
-              >
-                <option value="">— none —</option>
-                {state.projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="field">
-              <label>Visibility</label>
-              <select
-                value={editing.visibility ?? 'team'}
-                onChange={(e) => setEditing({ ...editing, visibility: e.target.value as Note['visibility'] })}
-              >
-                <option value="team">team</option>
-                <option value="public">public</option>
-                <option value="private">private</option>
-              </select>
-            </div>
-          </div>
-          <button
-            className="primary"
-            disabled={!editing.title?.trim() || !editing.body?.trim()}
-            onClick={async () => {
-              await run(
-                unwrap(api.saveNote({ ...editing, title: editing.title!.trim(), body: editing.body! })),
-              );
-              setEditing(null);
-            }}
-          >
-            Save
-          </button>{' '}
-          <button onClick={() => setEditing(null)}>Cancel</button>
-        </div>
-      ) : null}
-
-      {state.notes.length === 0 && !editing ? (
-        <div className="empty">No notes yet.</div>
-      ) : (
-        state.notes.map((n) => (
-          <div className="card" key={n.id}>
-            <div className="card-head">
-              <div>
-                <div className="card-title">{n.title}</div>
-                <div className="card-sub" style={{ whiteSpace: 'pre-wrap' }}>
-                  {n.body.length > 400 ? `${n.body.slice(0, 400)}…` : n.body}
-                </div>
-              </div>
-              <div className="card-meta">
-                <span className={`tag ${n.kind === 'blocker' ? 'bad' : n.kind === 'decision' ? 'accent' : ''}`}>
-                  {n.kind}
-                </span>
-                {n.visibility === 'private' ? <span className="tag warn">private</span> : null}
-                <div style={{ marginTop: 6 }}>{relative(n.updatedAt)}</div>
-              </div>
-            </div>
-            <div style={{ marginTop: 8 }}>
-              <button className="ghost" onClick={() => setEditing(n)}>
-                edit
-              </button>
-              <button className="danger" onClick={() => void run(unwrap(api.deleteNote(n.id)))}>
                 delete
               </button>
             </div>
