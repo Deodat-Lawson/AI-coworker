@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "build": "node scripts/build.mjs && vite build",
-    "start": "electron .",
+    "start": "node scripts/dev-identity.mjs && electron .",
     "typecheck": "tsc --noEmit",
     "dist": "electron-builder --publish never",
     "clean": "rm -rf dist release"

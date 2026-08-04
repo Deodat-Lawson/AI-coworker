@@ -136,10 +136,14 @@ try {
   console.log('launching the app…\n');
 
   const electron = (await import(path.join(repoRoot, 'node_modules/electron/index.js'))).default;
-  // Its own user-data directory, or the run inherits whatever relay and
-  // knowledge base the developer's real install last saved — which is how a
-  // "fresh" window ends up connected to somebody else's workspace and the
-  // suite fails for reasons that have nothing to do with the code.
+  // Give the run its own userData. `AI_COWORKER_WORKSPACE` moves the knowledge
+  // base but not the app's settings, so without this the suite writes its own
+  // config over the config of the app you actually use and leaves it there —
+  // and inherits whatever relay that config already pointed at, which is how a
+  // "fresh" window ends up in somebody else's workspace.
+  //
+  // Beside the vault rather than inside it: the app watches the vault
+  // recursively, and Electron writes to userData constantly.
   const userData = `${workspace}-userdata`;
   await fs.mkdir(userData, { recursive: true });
   await run(electron, ['.', `--user-data-dir=${userData}`], {

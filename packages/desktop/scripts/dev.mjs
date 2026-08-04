@@ -4,6 +4,8 @@ import process from 'node:process';
 import { build } from 'esbuild';
 import { createServer } from 'vite';
 
+import { brandDevElectron } from './dev-identity.mjs';
+
 /** Dev loop: vite for the renderer, esbuild --watch for main/preload. */
 const server = await createServer({ configFile: 'vite.config.ts' });
 await server.listen();
@@ -24,6 +26,10 @@ const mainCtx = await build({ ...shared, entryPoints: ['electron/main.ts'], outf
 await build({ ...shared, entryPoints: ['electron/preload.ts'], outfile: 'dist/main/preload.cjs' });
 void mainCtx;
 
+// The bundle we borrow from node_modules calls itself Electron in the Dock and
+// the menu bar. Rebrand it *before* asking the package where its binary lives —
+// the rebrand moves it.
+await brandDevElectron();
 const electronBin = (await import('electron')).default;
 const child = spawn(electronBin, ['.'], {
   stdio: 'inherit',
