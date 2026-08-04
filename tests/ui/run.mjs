@@ -92,7 +92,11 @@ try {
   console.log('launching the app…\n');
 
   const electron = (await import(path.join(repoRoot, 'node_modules/electron/index.js'))).default;
-  await run(electron, ['.'], {
+  // Give the run its own userData. `AI_COWORKER_WORKSPACE` moves the knowledge
+  // base but not the app's settings, so without this the suite writes its own
+  // config — including the unreachable relay below — over the config of the
+  // app you actually use, and leaves it there after the test exits.
+  await run(electron, ['.', `--user-data-dir=${path.join(workspace, '.electron')}`], {
     cwd: desktopDir,
     env: {
       ...process.env,
