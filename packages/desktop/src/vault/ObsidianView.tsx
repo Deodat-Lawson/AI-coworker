@@ -627,13 +627,14 @@ export default function ObsidianView({ extraViews = [] }: Props) {
    * folder is a real Obsidian vault, and Obsidian opened on the same folder
    * reads that key.
    *
-   * This must fire on a change of theme and on nothing else. Writing the file
-   * touches the vault, which pushes new state, which re-renders this component
-   * — so an effect that depended on the vault object would write, be woken by
-   * its own write, and write again, with the file watcher reloading the tree
-   * under the editor each time round.
+   * This fires on a *change* of theme and on nothing else, including not on
+   * mount. Writing the file touches the vault, the watcher reloads the tree,
+   * and anything with a file open loses its place — so doing it as the tab
+   * opens would mean every visit to Knowledge jolted the editor to correct a
+   * key nobody was looking at. A stale value in the file costs nothing until
+   * somebody actually flips the theme, which is when this catches it up.
    */
-  const mirroredTheme = useRef<string | null>(null);
+  const mirroredTheme = useRef<string | null>(appTheme);
   useEffect(() => {
     if (mirroredTheme.current === appTheme) return;
     mirroredTheme.current = appTheme;
