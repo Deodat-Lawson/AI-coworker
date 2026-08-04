@@ -26,6 +26,7 @@ import {
 import type {
   AgentNotification,
   Bookmark,
+  RelaySession,
   WorkspaceState,
 } from '@ai-coworker/agent';
 import type {
@@ -37,16 +38,25 @@ import type {
   VaultSearchHit,
   VaultSettings,
   Workspace,
+  WorkspacePermissions,
   WorkspacePrefs,
   WorkspaceRole,
 } from '@ai-coworker/shared';
-import { emptyStatus, isDirect } from '@ai-coworker/shared';
+import type { Appearance } from '@ai-coworker/shared';
+import {
+  THEME_BACKGROUNDS,
+  emptyStatus,
+  isDirect,
+  normalizeAppearance,
+  resolveTheme,
+} from '@ai-coworker/shared';
 import {
   BrowserWindow,
   Notification,
   app,
   dialog,
   ipcMain,
+  nativeTheme,
   net,
   protocol,
   shell,
@@ -61,12 +71,14 @@ import type {
   IpcResult,
   MeetingRequestInput,
   SendMessageInput,
+  AuthResult,
   SetupInput,
   ThreadView,
   VaultSearchOptions,
   VaultState,
   WorkspaceView,
 } from './ipc.js';
+import { relayAuth, type AuthAccount, type PendingInvitation, type WelcomeWorkspace } from './auth-client.js';
 import { MEMORY_CHANNELS, buildMemoryState, registerMemoryIpc } from './memory-ipc.js';
 
 const DEFAULT_RELAY = process.env.AI_COWORKER_RELAY || 'ws://localhost:8787';
@@ -77,6 +89,8 @@ interface Config {
   /** Set from Settings. Falls back to GEMINI_API_KEY in the environment or a .env file. */
   geminiApiKey?: string;
   geminiModel?: string;
+  /** dark | light | system. Lives here so the window can be painted before the renderer loads. */
+  appearance?: Appearance;
 }
 
 let mainWindow: BrowserWindow | null = null;
@@ -138,9 +152,68 @@ async function saveConfig(): Promise<void> {
   await fs.writeFile(configPath(), JSON.stringify(config, null, 2), 'utf8');
 }
 
+/**
+ * Push the chosen appearance out to everything the renderer cannot reach: the
+ * window's own background (what shows during a resize or before the first
+ * paint) and Electron's native chrome — menus, the traffic-light strip on the
+ * hidden-inset titlebar, and any native dialog we open.
+ */
+function applyAppearance(): void {
+  const appearance = normalizeAppearance(config.appearance);
+  nativeTheme.themeSource = appearance;
+  const theme = resolveTheme(appearance, nativeTheme.shouldUseDarkColors);
+  mainWindow?.setBackgroundColor(THEME_BACKGROUNDS[theme]);
+}
+
 function defaultKnowledgeDir(): string {
   // Folder name kept from an earlier release so upgrades keep their data.
   return path.join(app.getPath('userData'), 'workspace');
+}
+
+// --- sign-in state -----------------------------------------------------------
+
+/**
+ * The session held between verifying an email and having a knowledge base to
+ * store it in. Sign-up is several screens long and the account exists from the
+ * first one, so this is where the token waits — it moves onto disk the moment
+ * there is a knowledge base to put it beside.
+ */
+let pendingSession: RelaySession | null = null;
+
+async function rememberSession(
+  relayUrl: string,
+  token: string,
+  account: AuthAccount,
+): Promise<void> {
+  pendingSession = {
+    token,
+    email: account.email,
+    accountId: account.id,
+    address: account.address,
+    displayName: account.displayName,
+    savedAt: Date.now(),
+  };
+  // Once a knowledge base exists the session belongs on disk beside it, so a
+  // restart does not ask for the mailbox again.
+  if (knowledge) {
+    await knowledge.saveSession(relayUrl, pendingSession);
+    pushState();
+  }
+}
+
+/** Who the app is signed in as, for the Settings screen. */
+function signedInAccount(): { email: string; displayName: string; address: string } | null {
+  const url = (config.relayUrl || DEFAULT_RELAY).trim();
+  const session = knowledge?.session(url) ?? pendingSession;
+  if (!session) return null;
+  return { email: session.email, displayName: session.displayName, address: session.address };
+}
+
+function requireSession(): { url: string; token: string } {
+  const url = (config.relayUrl || DEFAULT_RELAY).trim();
+  const token = pendingSession?.token ?? knowledge?.session(url)?.token;
+  if (!token) throw new Error('Sign in first.');
+  return { url, token };
 }
 
 // --- workspace views ---------------------------------------------------------
@@ -184,6 +257,8 @@ function buildWorkspaceViews(a: PersonalAgent, kb: KnowledgeBase): WorkspaceView
       unread: totals.unread,
       mentions: totals.mentions,
       invites: state.invites,
+      joinRequests: state.joinRequests,
+      audit: state.audit,
       prefs: kb.prefs(state.workspace.id),
     };
   });
@@ -312,7 +387,29 @@ async function runDevHooks(window: BrowserWindow): Promise<void> {
     let payload: unknown;
     try {
       const source = await fs.readFile(probeFile, 'utf8');
-      payload = await window.webContents.executeJavaScript(source, true);
+      // A probe that never settles must not take the run with it: the whole
+      // point of the harness is to produce a report. On the deadline we read
+      // back what the probe published as it went, including which test it was
+      // in the middle of, which is the one piece of information a hang needs.
+      const limit = Number(devOption('AI_COWORKER_PROBE_TIMEOUT') ?? 480_000);
+      payload = await Promise.race([
+        window.webContents.executeJavaScript(source, true),
+        new Promise((resolve) =>
+          setTimeout(() => {
+            void window.webContents
+              .executeJavaScript('window.__probe && JSON.parse(JSON.stringify(window.__probe))')
+              .then((partial: { results?: unknown[]; logs?: string[]; running?: string }) =>
+                resolve({
+                  ...partial,
+                  fatal: `the probe stalled after ${Math.round(limit / 1000)}s${
+                    partial?.running ? ` in "${partial.running}"` : ''
+                  }`,
+                }),
+              )
+              .catch(() => resolve({ fatal: 'the probe stalled and could not be read back' }));
+          }, limit),
+        ),
+      ]);
     } catch (err) {
       payload = { fatal: (err as Error).stack ?? (err as Error).message };
     }
@@ -396,6 +493,8 @@ function buildState(): AppState {
       relays: [relayUrl],
       status: emptyStatus(),
       presence: 'offline',
+      appearance: normalizeAppearance(config.appearance),
+      account: signedInAccount(),
     };
   }
 
@@ -452,6 +551,8 @@ function buildState(): AppState {
     relays: agent.network.urls,
     status: knowledge.client.status,
     presence: knowledge.client.presence,
+    appearance: normalizeAppearance(config.appearance),
+    account: signedInAccount(),
   };
 }
 
@@ -694,6 +795,153 @@ function registerIpc(): void {
     await startAgent(dir);
   });
 
+  // --- signing up and in ----------------------------------------------------
+  //
+  // The sequence is the relay's; this side keeps the pieces that have to live
+  // on the machine — the session token beside the knowledge base, and the
+  // profile the agent runs as, taken from the account rather than typed.
+
+  /** The relay being signed in to: whatever was last set, or the default. */
+  const relayFor = (override?: string) => (override || config.relayUrl || DEFAULT_RELAY).trim();
+
+  handle<[string | undefined], { relayName: string; accounts: number; codesInResponse: boolean }>(
+    'auth:config',
+    (relayUrl) => relayAuth.config(relayFor(relayUrl)),
+  );
+
+  handle<[{ email: string; relayUrl?: string }], { email: string; expiresAt: number; devCode?: string }>(
+    'auth:start',
+    async (input) => {
+      const url = relayFor(input.relayUrl);
+      // Remember the relay as soon as it answers, so the rest of the flow and
+      // the eventual connection all point at the same place.
+      if (config.relayUrl !== url) {
+        config.relayUrl = url;
+        await saveConfig();
+      }
+      return relayAuth.start(url, input.email);
+    },
+  );
+
+  handle<[{ email: string; code: string; relayUrl?: string }], AuthResult>(
+    'auth:verify',
+    async (input) => {
+      const url = relayFor(input.relayUrl);
+      const result = await relayAuth.verify(url, input.email, input.code);
+      await rememberSession(url, result.token, result.account);
+      return {
+        account: result.account,
+        created: result.created,
+        needsProfile: result.needsProfile,
+        workspaces: result.workspaces,
+        invitations: result.invitations,
+        relayUrl: url,
+      };
+    },
+  );
+
+  handle<[{ email: string; password: string; relayUrl?: string }], AuthResult>(
+    'auth:login',
+    async (input) => {
+      const url = relayFor(input.relayUrl);
+      const result = await relayAuth.login(url, input.email, input.password);
+      await rememberSession(url, result.token, result.account);
+      return {
+        account: result.account,
+        created: false,
+        needsProfile: false,
+        workspaces: result.workspaces,
+        invitations: result.invitations,
+        relayUrl: url,
+      };
+    },
+  );
+
+  handle<[{ displayName?: string; password?: string }], AuthAccount>('auth:profile', async (patch) => {
+    const { url, token } = requireSession();
+    const { account } = await relayAuth.profile(url, token, patch);
+    await rememberSession(url, token, account);
+    return account;
+  });
+
+  handle<
+    [{ name: string; project?: string; description?: string; discoverable?: boolean }],
+    { workspaceId: string; name: string; createdChannel: string }
+  >('auth:createWorkspace', async (input) => {
+    const { url, token } = requireSession();
+    const result = await relayAuth.createWorkspace(url, token, input);
+    return {
+      workspaceId: result.workspace.id,
+      name: result.workspace.name,
+      createdChannel: result.createdChannel,
+    };
+  });
+
+  handle<[{ workspaceId?: string; code?: string; message?: string }], { workspaceId: string; requested: boolean }>(
+    'auth:join',
+    async (input) => {
+      const { url, token } = requireSession();
+      const result = await relayAuth.join(url, token, input);
+      return { workspaceId: result.workspace.id, requested: Boolean(result.requested) };
+    },
+  );
+
+  handle<
+    [{ workspaceId: string; emails: string[] }],
+    { invited: { email: string; code: string }[]; failed: { email: string; error: string }[] }
+  >('auth:invite', async (input) => {
+    const { url, token } = requireSession();
+    return relayAuth.invite(url, token, input.workspaceId, input.emails);
+  });
+
+  /**
+   * The last step: make the knowledge base this account's, and start the agent
+   * against it. Everything before this was on the relay; this is where the
+   * person gets a machine of their own.
+   */
+  handle<[{ knowledgeDir?: string; title?: string; team?: string; focusAreas?: string[] }], void>(
+    'auth:finish',
+    async (input) => {
+      const url = relayFor();
+      const session = pendingSession;
+      if (!session) throw new Error('Sign in first.');
+
+      const dir = input.knowledgeDir || config.knowledgeDir || defaultKnowledgeDir();
+      config.knowledgeDir = dir;
+      config.relayUrl = url;
+      await saveConfig();
+
+      const kb = await KnowledgeBase.open(dir);
+      await kb.updateProfile({
+        ...emptyProfile(session.address, session.displayName),
+        title: input.title ?? '',
+        team: input.team ?? '',
+        focusAreas: input.focusAreas ?? [],
+      });
+      await kb.saveSession(url, { ...session, savedAt: Date.now() });
+      await kb.setRelays([url]);
+      await kb.flush();
+      await startAgent(dir);
+    },
+  );
+
+  handle<[], void>('auth:signOut', async () => {
+    const url = relayFor();
+    const token = knowledge?.session(url)?.token ?? pendingSession?.token;
+    pendingSession = null;
+    if (token) {
+      // Best effort: the local session is gone either way, and a relay that is
+      // down must not be able to trap somebody in a signed-in state.
+      try {
+        await relayAuth.logout(url, token);
+      } catch {
+        /* the token expires on its own */
+      }
+    }
+    await knowledge?.clearSession(url);
+    pushState();
+  });
+
   handle<[string], { reply: string; actions: { tool: string; result: string }[] }>(
     'chat',
     async (message) => {
@@ -798,6 +1046,13 @@ function registerIpc(): void {
     agent.relay.connect();
   });
 
+  handle<[Appearance], void>('appearance:set', async (appearance) => {
+    config.appearance = normalizeAppearance(appearance);
+    await saveConfig();
+    applyAppearance();
+    pushState();
+  });
+
   // Changing the key swaps the brain without losing the knowledge base or the socket.
   handle<[{ apiKey?: string; model?: string }], void>('brain:set', async (input) => {
     config.geminiApiKey = input.apiKey?.trim() || undefined;
@@ -898,16 +1153,67 @@ function registerIpc(): void {
   handle<[], void>('ws:discover', () => {
     requireAgent().discoverWorkspaces();
   });
-  handle<[string, string, WorkspaceRole], void>('ws:setRole', (workspaceId, address, role) => {
-    requireAgent().setMemberRole(workspaceId, address, role);
+  handle<[string, Partial<WorkspacePermissions>], void>('ws:permissions', (workspaceId, patch) => {
+    requireAgent().setWorkspacePermissions(workspaceId, patch);
   });
-  handle<[string, string], void>('ws:removeMember', (workspaceId, address) => {
-    requireAgent().removeMember(workspaceId, address);
+  handle<[string, string | string[], WorkspaceRole, string[] | undefined], void>(
+    'ws:setRole',
+    (workspaceId, addresses, role, guestChannels) => {
+      requireAgent().setMemberRole(workspaceId, addresses, role, guestChannels);
+    },
+  );
+  handle<[string, string | string[]], void>('ws:removeMember', (workspaceId, addresses) => {
+    requireAgent().removeMember(workspaceId, addresses);
   });
-  handle<[string, { displayName?: string; title?: string }], void>('ws:profile', (workspaceId, patch) => {
-    requireAgent().setWorkspaceProfile(workspaceId, patch);
+  handle<[string, string | string[], boolean], void>(
+    'ws:setActive',
+    (workspaceId, addresses, active) => {
+      requireAgent().setMemberActive(workspaceId, addresses, active);
+    },
+  );
+  handle<[string, string], void>('ws:transferOwnership', (workspaceId, address) => {
+    requireAgent().transferOwnership(workspaceId, address);
   });
-  handle<[string, { invitedAddress?: string; expiresInHours?: number; maxUses?: number } | undefined], void>(
+  handle<[string, { address?: string; displayName?: string; title?: string }], void>(
+    'ws:profile',
+    (workspaceId, patch) => {
+      requireAgent().setWorkspaceProfile(workspaceId, patch);
+    },
+  );
+  handle<[string, string | undefined, string | undefined], void>(
+    'ws:requestJoin',
+    async (slug, message, relayUrl) => {
+      // Asking to join a workspace on a relay we are not on yet means dialling
+      // it first, exactly as joining by code does.
+      if (relayUrl) await requireAgent().network.add(relayUrl);
+      if (!requireAgent().requestToJoin(slug, message)) throw new Error('Not connected to a relay.');
+    },
+  );
+  handle<[string, string, boolean, WorkspaceRole | undefined], void>(
+    'ws:reviewJoin',
+    (workspaceId, requestId, approve, role) => {
+      requireAgent().reviewJoinRequest(workspaceId, requestId, approve, role);
+    },
+  );
+  handle<[string], void>('ws:joinRequests', (workspaceId) => {
+    requireAgent().listJoinRequests(workspaceId);
+  });
+  handle<[string, number | undefined], void>('ws:audit', (workspaceId, limit) => {
+    requireAgent().listAudit(workspaceId, limit);
+  });
+  handle<
+    [
+      string,
+      {
+        invitedAddress?: string;
+        role?: WorkspaceRole;
+        expiresInHours?: number;
+        maxUses?: number;
+        channels?: string[];
+      } | undefined,
+    ],
+    void
+  >(
     'ws:createInvite',
     (workspaceId, input) => {
       requireAgent().createInvite(workspaceId, input ?? {});
@@ -1143,7 +1449,10 @@ function createWindow(): void {
     ...(process.platform === 'darwin'
       ? {}
       : { icon: path.join(__dirname, '../../build/icon.png') }),
-    backgroundColor: '#0f1115',
+    backgroundColor:
+      THEME_BACKGROUNDS[
+        resolveTheme(normalizeAppearance(config.appearance), nativeTheme.shouldUseDarkColors)
+      ],
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),

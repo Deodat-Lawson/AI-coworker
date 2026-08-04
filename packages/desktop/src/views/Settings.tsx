@@ -1,7 +1,11 @@
 import { useState } from 'react';
 
+import { APPEARANCES, APPEARANCE_LABELS, type Appearance } from '@ai-coworker/shared';
+
 import { api, unwrap, type AppState } from '../lib/api.js';
 import { dateTimeOf } from '../lib/format.js';
+import { watchAppearance } from '../lib/theme.js';
+import { ConfirmButton } from '../components/ui.js';
 
 interface Props {
   state: AppState;
@@ -47,9 +51,77 @@ export default function Settings({ state }: Props) {
     }
   }
 
+  function chooseAppearance(next: Appearance) {
+    // Paint first, persist second: the round trip through the main process is
+    // fast, but not as fast as an eye.
+    watchAppearance(next);
+    void api.setAppearance(next);
+  }
+
   return (
     <>
       <h1>Settings</h1>
+
+      <h2>Appearance</h2>
+      <div className="card">
+        <div className="theme-choices" role="radiogroup" aria-label="Theme">
+          {APPEARANCES.map((option) => (
+            <button
+              key={option}
+              role="radio"
+              aria-checked={state.appearance === option}
+              className={`theme-choice ${state.appearance === option ? 'on' : ''}`}
+              onClick={() => chooseAppearance(option)}
+            >
+              <span className={`theme-swatch ${option}`} aria-hidden="true">
+                <span className="theme-swatch-rail" />
+                <span className="theme-swatch-body" />
+              </span>
+              {APPEARANCE_LABELS[option]}
+            </button>
+          ))}
+        </div>
+        <p className="hint">
+          <kbd>⌘⇧L</kbd> cycles through these from anywhere. "Match system" follows your machine
+          as it changes, including when it switches on its own at sunset.
+        </p>
+      </div>
+
+      <h2>Account</h2>
+      <div className="card">
+        {state.account ? (
+          <>
+            <div className="row">
+              <div className="field">
+                <label>Signed in as</label>
+                <input readOnly value={state.account.email} />
+              </div>
+              <div className="field">
+                <label>Agent address</label>
+                <input readOnly value={state.account.address} />
+              </div>
+            </div>
+            <p className="hint">
+              Your address is derived from your email and fixed. The relay checks it against this
+              session, so nobody else can post as you.
+            </p>
+            <ConfirmButton
+              label="Sign out on this machine"
+              confirmLabel="Sign out — the knowledge base stays"
+              onConfirm={async () => {
+                await unwrap(api.authSignOut());
+                setStatus('Signed out.');
+              }}
+            />
+          </>
+        ) : (
+          <p className="card-sub" style={{ marginTop: 0 }}>
+            This app is running without an account: the relay takes your agent address at face
+            value, which is only safe on a network where everybody already is. Point it at a relay
+            with accounts and sign in to fix that.
+          </p>
+        )}
+      </div>
 
       <h2>How your agent represents you</h2>
       <div className="card">

@@ -839,7 +839,7 @@ export interface GraphSettings {
 
 export function defaultVaultSettings(): VaultSettings {
   return {
-    theme: 'dark',
+    theme: 'system',
     accentColor: '#6ea8fe',
     fontSize: 16,
     lineWidth: 700,

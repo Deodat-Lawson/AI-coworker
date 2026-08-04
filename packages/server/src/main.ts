@@ -11,6 +11,8 @@ import process from 'node:process';
 import { type Meeting, formatTime } from '@ai-coworker/shared';
 import { WebSocketServer } from 'ws';
 
+import { Accounts, LogMailer } from './accounts.js';
+import { AuthHttp } from './auth-http.js';
 import { Relay } from './relay.js';
 
 const PORT = Number(process.env.PORT ?? process.env.AI_COWORKER_PORT ?? 8787);
@@ -18,16 +20,35 @@ const HOST = process.env.HOST ?? '0.0.0.0';
 const STATE_FILE = process.env.AI_COWORKER_RELAY_STATE ?? path.join(process.cwd(), '.relay-state.json');
 const WORKSPACE_FILE =
   process.env.AI_COWORKER_WORKSPACE_STATE ?? path.join(process.cwd(), '.relay-workspaces.json');
+const ACCOUNT_FILE =
+  process.env.AI_COWORKER_ACCOUNT_STATE ?? path.join(process.cwd(), '.relay-accounts.json');
+/**
+ * Off by default so a relay you start for a demo still works with no ceremony.
+ * Set AI_COWORKER_REQUIRE_AUTH=1 and nothing connects without a verified
+ * account — which is what you want for anything that is not your own laptop.
+ */
+const AUTH_MODE = process.env.AI_COWORKER_REQUIRE_AUTH ? 'required' : 'optional';
 
 function log(message: string): void {
   console.log(`[relay ${new Date().toISOString()}] ${message}`);
 }
 
+const relayName = process.env.AI_COWORKER_RELAY_NAME ?? 'Stead';
+
+const accounts = new Accounts({
+  statePath: ACCOUNT_FILE,
+  relayName,
+  log,
+  mailer: new LogMailer(log),
+});
+
 const relay = new Relay({
   log,
+  auth: AUTH_MODE,
+  accounts,
   hub: {
     statePath: WORKSPACE_FILE,
-    relayName: process.env.AI_COWORKER_RELAY_NAME ?? 'Stead',
+    relayName,
     defaultWorkspaceName: process.env.AI_COWORKER_WORKSPACE ?? 'Home',
   },
 });
@@ -68,7 +89,15 @@ function restoreSchedule(): void {
 relay.on('meeting.scheduled', saveSchedule);
 relay.on('meeting.ended', saveSchedule);
 
+const auth = new AuthHttp({ accounts, hub: relay.hub, relayName, log });
+
 const server = http.createServer((req, res) => {
+  // Sign-up and sign-in come before anything else: they are the only endpoints
+  // somebody can reach before they have an identity.
+  if ((req.url ?? '').startsWith('/auth/')) {
+    void auth.handle(req, res);
+    return;
+  }
   if (req.url === '/health' || req.url === '/') {
     const body = JSON.stringify(
       {
@@ -76,6 +105,8 @@ const server = http.createServer((req, res) => {
         service: 'ai-coworker-relay',
         online: relay.onlineCount,
         workspaces: relay.hub.size,
+        accounts: accounts.size,
+        auth: AUTH_MODE,
         home: relay.hub.homeWorkspaceId,
         agents: relay.directory.map((a) => ({
           address: a.address,
@@ -110,11 +141,13 @@ relay.on('meeting.live', (meeting: { title: string }) => log(`live: "${meeting.t
 server.listen(PORT, HOST, () => {
   log(`listening on ws://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
   log(`health: http://localhost:${PORT}/health`);
+  log(`sign-in: http://localhost:${PORT}/auth/config (accounts ${AUTH_MODE})`);
   restoreSchedule();
 });
 
 function shutdown(): void {
   log('shutting down');
+  accounts.shutdown();
   relay.shutdown();
   wss.close();
   server.close(() => process.exit(0));

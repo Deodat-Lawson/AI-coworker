@@ -122,15 +122,13 @@ export default function SettingsModal({
 
           {section === 'appearance' ? (
             <>
-              <Row label="Theme">
-                <select
-                  value={settings.theme}
-                  onChange={(event) => onChange({ theme: event.target.value as VaultSettings['theme'] })}
-                >
-                  <option value="dark">Dark</option>
-                  <option value="light">Light</option>
-                  <option value="system">Match system</option>
-                </select>
+              <Row
+                label="Theme"
+                hint="Knowledge uses the app's theme, so there is one control rather than two that can disagree. Settings → Appearance, or ⌘⇧L from anywhere."
+              >
+                <span className="settings-static">
+                  {settings.theme === 'light' ? 'Light' : 'Dark'} — following the app
+                </span>
               </Row>
               <Row label="Accent colour">
                 <div className="accent-row">

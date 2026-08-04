@@ -65,4 +65,6 @@ export const emptyState: AppState = {
   relays: [],
   status: { emoji: '', text: '', expiresAt: 0 },
   presence: 'offline',
+  appearance: 'system',
+  account: null,
 };

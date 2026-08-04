@@ -11,10 +11,12 @@ import { EventEmitter } from 'node:events';
 
 import {
   type AgentAddress,
+  type AuditEntry,
   type Channel,
   type ChannelId,
   type ChannelReadState,
   type Invite,
+  type JoinRequest,
   type Message,
   type MessageId,
   type SearchResults,
@@ -56,6 +58,9 @@ export interface WorkspaceState {
   complete: Set<ChannelId>;
   typing: Map<ChannelId, Map<AgentAddress, number>>;
   invites: Invite[];
+  /** Only ever populated for admins; the relay refuses to send it to anybody else. */
+  joinRequests: JoinRequest[];
+  audit: AuditEntry[];
 }
 
 export class WorkspaceBook extends EventEmitter {
@@ -118,6 +123,8 @@ export class WorkspaceBook extends EventEmitter {
           complete: previous?.complete ?? new Set(),
           typing: previous?.typing ?? new Map(),
           invites: previous?.invites ?? [],
+          joinRequests: previous?.joinRequests ?? [],
+          audit: previous?.audit ?? [],
         };
         for (const [channelId, messages] of Object.entries(message.recent)) {
           state.messages.set(channelId, [...messages]);
@@ -126,6 +133,27 @@ export class WorkspaceBook extends EventEmitter {
           if (messages.length < SNAPSHOT_PAGE) state.complete.add(channelId);
           else state.complete.delete(channelId);
         }
+
+        // A snapshot is the whole truth about what this person can see, so
+        // anything it leaves out has been taken away — a channel archived out
+        // from under them, or access narrowed to a guest's single room. Carrying
+        // the old messages forward would leave that history readable locally
+        // long after the relay stopped serving it.
+        for (const channelId of [...state.messages.keys()]) {
+          if (state.channels.has(channelId)) continue;
+          state.messages.delete(channelId);
+          state.reads.delete(channelId);
+          state.complete.delete(channelId);
+          state.typing.delete(channelId);
+        }
+        // Threads are keyed by root id, so they are pruned by the channel their
+        // replies belong to rather than by whether the root is still on the
+        // visible page — an open thread can easily be older than that.
+        for (const [rootId, replies] of state.threads) {
+          const channelId = replies[0]?.channelId;
+          if (channelId && !state.channels.has(channelId)) state.threads.delete(rootId);
+        }
+
         this.states.set(message.workspace.id, state);
         this.emit('change');
         this.emit('workspace.snapshot', state);
@@ -261,6 +289,43 @@ export class WorkspaceBook extends EventEmitter {
         const state = this.states.get(message.workspaceId);
         if (state) {
           state.invites = message.invites;
+          this.emit('change');
+        }
+        return true;
+      }
+
+      case 'workspace.join_requests.result': {
+        const state = this.states.get(message.workspaceId);
+        if (state) {
+          state.joinRequests = message.requests;
+          this.emit('change');
+        }
+        return true;
+      }
+
+      case 'workspace.join_requested': {
+        const state = this.states.get(message.workspaceId);
+        if (state) {
+          state.joinRequests = [
+            message.request,
+            ...state.joinRequests.filter((r) => r.id !== message.request.id),
+          ];
+          this.emit('change');
+        }
+        this.emit('join.requested', message.request);
+        return true;
+      }
+
+      case 'workspace.join_decided':
+        // The snapshot follows on approval; this is what lets an app say "they
+        // said no" instead of leaving somebody watching an empty rail.
+        this.emit('join.decided', message.workspaceName, message.approved);
+        return true;
+
+      case 'workspace.audit.result': {
+        const state = this.states.get(message.workspaceId);
+        if (state) {
+          state.audit = message.entries;
           this.emit('change');
         }
         return true;

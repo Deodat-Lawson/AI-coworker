@@ -1,21 +1,30 @@
 /* ---------------------------------------------------------------------------
    The vault workspace.
 
-   Two themes, driven by [data-vault-theme] on <html>, so a light vault can sit
-   inside the dark app shell without either fighting the other.
+   The `--ob-*` names below are a vocabulary, not a palette: every one of them
+   resolves to the app's own theme token. The vault used to carry a second set
+   of colours so it could wear a different theme from the shell around it, and
+   the result was two palettes that drifted — a "light" vault that was a
+   slightly different white from the window it sat in, and a vault that stayed
+   dark when the app went light because the choice was written into a file.
+   One palette, one control: the Knowledge tab is part of the app.
    --------------------------------------------------------------------------- */
 
 .ob {
-  --ob-bg: #14161b;
-  --ob-bg-alt: #101216;
-  --ob-bg-raised: #1a1d24;
-  --ob-border: #262b34;
-  --ob-text: #dcdfe6;
-  --ob-text-dim: #99a0ad;
-  --ob-text-faint: #6b7280;
-  --ob-hover: #21252e;
-  --ob-active: #2a2f3a;
-  --ob-mark: #7a6a2a;
+  /* The one thing that is still the vault's own: an accent chosen in vault
+     settings. Without one it falls back to the app's. */
+  --accent: var(--vault-accent, var(--theme-accent));
+
+  --ob-bg: var(--bg);
+  --ob-bg-alt: var(--sidebar);
+  --ob-bg-raised: var(--bg-raised);
+  --ob-border: var(--border);
+  --ob-text: var(--text);
+  --ob-text-dim: var(--text-dim);
+  --ob-text-faint: var(--text-faint);
+  --ob-hover: var(--hover);
+  --ob-active: var(--active);
+  --ob-mark: var(--mark);
 
   display: grid;
   grid-template-columns: auto auto minmax(0, 1fr) auto;
@@ -25,19 +34,6 @@
   color: var(--ob-text);
   font-size: 14px;
   overflow: hidden;
-}
-
-:root[data-vault-theme='light'] .ob {
-  --ob-bg: #ffffff;
-  --ob-bg-alt: #f6f6f8;
-  --ob-bg-raised: #ffffff;
-  --ob-border: #e2e4e9;
-  --ob-text: #23252b;
-  --ob-text-dim: #63676f;
-  --ob-text-faint: #8b8f98;
-  --ob-hover: #eceef2;
-  --ob-active: #e2e5eb;
-  --ob-mark: #ffe58a;
 }
 
 .main.is-full {
@@ -1196,14 +1192,14 @@
 .tok-removed { color: #f87171; }
 .tok-meta { color: #82aaff; }
 
-:root[data-vault-theme='light'] .tok-keyword { color: #8250df; }
-:root[data-vault-theme='light'] .tok-string { color: #0a7c3e; }
-:root[data-vault-theme='light'] .tok-number { color: #b3541e; }
-:root[data-vault-theme='light'] .tok-comment { color: #6b7280; }
-:root[data-vault-theme='light'] .tok-function { color: #1f5eb8; }
-:root[data-vault-theme='light'] .tok-type { color: #953800; }
-:root[data-vault-theme='light'] .tok-tag { color: #b81c47; }
-:root[data-vault-theme='light'] .tok-punct { color: #57606a; }
+:root[data-theme='light'] .tok-keyword { color: #8250df; }
+:root[data-theme='light'] .tok-string { color: #0a7c3e; }
+:root[data-theme='light'] .tok-number { color: #b3541e; }
+:root[data-theme='light'] .tok-comment { color: #6b7280; }
+:root[data-theme='light'] .tok-function { color: #1f5eb8; }
+:root[data-theme='light'] .tok-type { color: #953800; }
+:root[data-theme='light'] .tok-tag { color: #b81c47; }
+:root[data-theme='light'] .tok-punct { color: #57606a; }
 
 /* --- graph ---------------------------------------------------------------- */
 
@@ -1814,4 +1810,10 @@ button.danger-solid {
   color: var(--ob-text-faint);
   font-size: 12.5px;
   padding: 10px;
+}
+
+/* A setting the vault reports rather than controls. */
+.settings-static {
+  color: var(--ob-text-dim);
+  font-size: 13px;
 }

@@ -4,9 +4,11 @@ import { api, unwrap, type AppState } from '../lib/api.js';
 
 interface Props {
   state: AppState;
+  /** Back to signing in. Absent when this is the only way in. */
+  onBack?: () => void;
 }
 
-export default function Onboarding({ state }: Props) {
+export default function Onboarding({ state, onBack }: Props) {
   const [mode, setMode] = useState<'persona' | 'custom'>('persona');
   const [personaKey, setPersonaKey] = useState(state.personas[0]?.key ?? '');
   const [displayName, setDisplayName] = useState('');
@@ -65,6 +67,11 @@ export default function Onboarding({ state }: Props) {
   return (
     <div className="onboarding">
       <div className="onboarding-inner">
+        {onBack ? (
+          <button className="linkish" onClick={onBack} style={{ marginBottom: 10 }}>
+            ← Back to signing in
+          </button>
+        ) : null}
         <h1>Set up your agent</h1>
         <p className="subtitle">
           Your agent runs on this machine, next to a knowledge base only you can see. It meets other

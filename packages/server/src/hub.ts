@@ -16,10 +16,14 @@ import path from 'node:path';
 
 import {
   type AgentAddress,
+  type AuditAction,
+  type AuditEntry,
+  type Capability,
   type Channel,
   type ChannelId,
   type ChannelReadState,
   type Invite,
+  type JoinRequest,
   type Message,
   type MessageId,
   type Presence,
@@ -31,8 +35,13 @@ import {
   type Workspace,
   type WorkspaceId,
   type WorkspaceMember,
+  type WorkspacePermissions,
   type WorkspaceRole,
+  AUDIT_LIMIT,
   atLeast,
+  can,
+  clampCapability,
+  defaultPermissions,
   dmKey,
   emptyStatus,
   id,
@@ -61,6 +70,11 @@ interface MemberRecord {
   role: WorkspaceRole;
   joinedAt: number;
   deactivated: boolean;
+  deactivatedAt?: number;
+  deactivatedBy?: AgentAddress;
+  /** A guest confined to these channels; empty means the whole workspace. */
+  guestChannels?: ChannelId[];
+  invitedBy?: AgentAddress;
   /** Per-workspace overrides; absent means "use the person's own profile". */
   displayName?: string;
   title?: string;
@@ -78,10 +92,15 @@ interface WorkspaceRecord {
   members: Map<AgentAddress, MemberRecord>;
   channels: Map<ChannelId, ChannelRecord>;
   invites: Map<string, Invite>;
+  joinRequests: Map<string, JoinRequest>;
+  /** Newest last, capped at AUDIT_LIMIT. */
+  audit: AuditEntry[];
 }
 
 interface Identity {
   profile: PublicProfile;
+  /** Set once an account has been verified for this address. */
+  email?: string;
   presence: Presence;
   status: UserStatus;
   lastSeen: number;
@@ -149,7 +168,12 @@ export class WorkspaceHub {
     });
 
     const mine = this.workspaceIdsFor(profile.address);
-    if (!mine.length) {
+    // Somebody whose only membership was switched off must not be silently
+    // readmitted to the home workspace on their next connection.
+    const deactivatedSomewhere = [...this.workspaces.values()].some(
+      (r) => r.members.get(profile.address)?.deactivated,
+    );
+    if (!mine.length && !deactivatedSomewhere) {
       const fallback = this.defaultWorkspace();
       this.addMember(fallback, profile.address, fallback.members.size === 0 ? 'owner' : 'member');
       mine.push(fallback.workspace.id);
@@ -191,10 +215,16 @@ export class WorkspaceHub {
   // Lookups
   // -------------------------------------------------------------------------
 
+  /**
+   * The workspaces this person can actually open. A deactivated membership is
+   * still a membership — the row stays in everybody else's member list — but it
+   * is not a place they can go.
+   */
   workspaceIdsFor(address: AgentAddress): WorkspaceId[] {
     const out: WorkspaceId[] = [];
     for (const record of this.workspaces.values()) {
-      if (record.members.has(address)) out.push(record.workspace.id);
+      const member = record.members.get(address);
+      if (member && !member.deactivated) out.push(record.workspace.id);
     }
     return out;
   }
@@ -223,16 +253,122 @@ export class WorkspaceHub {
     }
   }
 
+  /**
+   * Check a configured capability rather than a fixed role. Everything an
+   * administrator can loosen or tighten goes through here, so the settings
+   * screen and the door agree by construction.
+   */
+  private requireCapability(
+    record: WorkspaceRecord,
+    address: AgentAddress,
+    capability: Capability,
+  ): void {
+    if (can(this.roleOf(record, address), capability, record.workspace.permissions)) return;
+    const floor = clampCapability(capability, record.workspace.permissions[capability]);
+    throw new HubError(
+      'forbidden',
+      `In ${record.workspace.name} that is limited to ${floor === 'member' ? 'members' : `${floor}s`} and above.`,
+    );
+  }
+
+  /** A deactivated account can be seen but can do nothing. */
+  private requireActive(record: WorkspaceRecord, address: AgentAddress): void {
+    if (record.members.get(address)?.deactivated) {
+      throw new HubError(
+        'deactivated',
+        `Your account in ${record.workspace.name} has been deactivated. An admin can switch it back on.`,
+      );
+    }
+  }
+
+  private isPrimaryOwner(record: WorkspaceRecord, address: AgentAddress): boolean {
+    return record.workspace.primaryOwner === address;
+  }
+
+  /**
+   * Whether `actor` may act on `target`. Nobody outranks the primary owner, and
+   * an admin cannot reach an owner — otherwise the first thing a compromised
+   * admin account does is remove everybody above it.
+   */
+  private requireOutranks(record: WorkspaceRecord, actor: AgentAddress, target: AgentAddress): void {
+    if (this.isPrimaryOwner(record, target)) {
+      throw new HubError('forbidden', 'The primary owner can only be changed by handing the workspace over.');
+    }
+    const actorRole = this.roleOf(record, actor);
+    const targetRole = this.roleOf(record, target);
+    if (!targetRole) throw new HubError('not_a_member', 'They are not in this workspace.');
+    if (actorRole === 'owner') return;
+    if (atLeast(targetRole, 'owner')) {
+      throw new HubError('forbidden', 'Only an owner can act on another owner.');
+    }
+  }
+
+  /** Resolve the one-or-many spelling both bulk operations accept. */
+  private targets(input: { address?: AgentAddress; addresses?: AgentAddress[] }): AgentAddress[] {
+    const all = [...(input.addresses ?? []), ...(input.address ? [input.address] : [])];
+    const unique = [...new Set(all.filter(Boolean))];
+    if (!unique.length) throw new HubError('bad_request', 'Name at least one person.');
+    return unique;
+  }
+
+  // -------------------------------------------------------------------------
+  // Audit
+  // -------------------------------------------------------------------------
+
+  private audit(
+    record: WorkspaceRecord,
+    actor: AgentAddress,
+    action: AuditAction,
+    target?: string,
+    detail?: string,
+  ): void {
+    record.audit.push({
+      id: id('aud'),
+      workspaceId: record.workspace.id,
+      at: Date.now(),
+      actor,
+      action,
+      target,
+      detail,
+    });
+    if (record.audit.length > AUDIT_LIMIT) {
+      record.audit.splice(0, record.audit.length - AUDIT_LIMIT);
+    }
+  }
+
+  auditLog(actor: AgentAddress, workspaceId: WorkspaceId, limit = 200): ServerMessage {
+    const record = this.requireMembership(workspaceId, actor);
+    this.requireRole(record, actor, 'admin');
+    const entries = record.audit.slice(-Math.max(1, Math.min(limit, AUDIT_LIMIT))).reverse();
+    return { type: 'workspace.audit.result', workspaceId, entries };
+  }
+
   private requireChannel(record: WorkspaceRecord, channelId: ChannelId): ChannelRecord {
     const channel = record.channels.get(channelId);
     if (!channel) throw new HubError('no_channel', 'That channel does not exist.');
     return channel;
   }
 
-  /** Public channels are visible to the whole workspace; the rest are by membership. */
-  private canSee(entry: ChannelRecord, address: AgentAddress): boolean {
+  /**
+   * Public channels are visible to the whole workspace; the rest are by
+   * membership. A confined guest is the exception in both directions: they see
+   * the channels they were let into and nothing else, not even a public one.
+   */
+  private canSee(record: WorkspaceRecord, entry: ChannelRecord, address: AgentAddress): boolean {
+    const confined = this.confinedTo(record, address);
+    if (confined) {
+      return confined.includes(entry.channel.id) || entry.channel.members.includes(address);
+    }
     if (entry.channel.kind === 'public') return true;
     return entry.channel.members.includes(address);
+  }
+
+  /** The channel list a guest is pinned to, or null if they are not pinned. */
+  private confinedTo(record: WorkspaceRecord, address: AgentAddress): ChannelId[] | null {
+    const member = record.members.get(address);
+    if (!member || member.role !== 'guest') return null;
+    const channels = member.guestChannels ?? [];
+    return channels.length ? channels : null;
   }
 
   private requireVisible(
@@ -241,7 +377,7 @@ export class WorkspaceHub {
     address: AgentAddress,
   ): ChannelRecord {
     const entry = this.requireChannel(record, channelId);
-    if (!this.canSee(entry, address)) throw new HubError('forbidden', 'You do not have access to that channel.');
+    if (!this.canSee(record, entry, address)) throw new HubError('forbidden', 'You do not have access to that channel.');
     return entry;
   }
 
@@ -275,6 +411,11 @@ export class WorkspaceHub {
       role: entry.role,
       joinedAt: entry.joinedAt,
       deactivated: entry.deactivated,
+      deactivatedAt: entry.deactivatedAt,
+      deactivatedBy: entry.deactivatedBy,
+      guestChannels: entry.role === 'guest' ? [...(entry.guestChannels ?? [])] : [],
+      primaryOwner: record.workspace.primaryOwner === address,
+      invitedBy: entry.invitedBy,
       presence: entry.deactivated ? 'offline' : (identity?.presence ?? 'offline'),
       status: identity?.status ?? emptyStatus(),
       lastSeen: identity?.lastSeen ?? entry.joinedAt,
@@ -331,7 +472,7 @@ export class WorkspaceHub {
     const recent: Record<ChannelId, Message[]> = {};
 
     for (const entry of record.channels.values()) {
-      if (!this.canSee(entry, address)) continue;
+      if (!this.canSee(record, entry, address)) continue;
       channels.push(entry.channel);
       readStates.push(this.readState(entry, address));
       if (entry.channel.members.includes(address)) {
@@ -386,8 +527,16 @@ export class WorkspaceHub {
 
   /** Everyone who should be told about traffic in this channel. */
   private audience(record: WorkspaceRecord, entry: ChannelRecord): AgentAddress[] {
-    if (entry.channel.kind === 'public') return [...record.members.keys()];
-    return entry.channel.members.filter((a) => record.members.has(a));
+    const eligible =
+      entry.channel.kind === 'public'
+        ? [...record.members.keys()]
+        : entry.channel.members.filter((a) => record.members.has(a));
+    // A confined guest must not be told about a public channel they cannot see,
+    // and a deactivated account should stop receiving traffic entirely.
+    return eligible.filter((address) => {
+      if (record.members.get(address)?.deactivated) return false;
+      return this.canSee(record, entry, address);
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -437,8 +586,15 @@ export class WorkspaceHub {
       createdBy: input.createdBy,
       createdAt: now,
       updatedAt: now,
-      invitePolicy: 'anyone',
+      // Whoever asked for the workspace holds it until they hand it on. The
+      // relay's own home workspace has no person behind it, so its first member
+      // takes the seat on the way in.
+      primaryOwner: input.createdBy === 'relay' ? '' : input.createdBy,
+      permissions: defaultPermissions(),
       discoverable: input.discoverable ?? true,
+      acceptsJoinRequests: true,
+      emailDomains: [],
+      domainJoin: 'open',
       // Everything created with the workspace is a default: a new member should
       // land somewhere with people in it, not in an empty #general.
       defaultChannels: [],
@@ -448,6 +604,8 @@ export class WorkspaceHub {
       members: new Map(),
       channels: new Map(),
       invites: new Map(),
+      joinRequests: new Map(),
+      audit: [],
     };
     this.workspaces.set(workspace.id, record);
 
@@ -507,6 +665,7 @@ export class WorkspaceHub {
       channels: extra,
     });
     this.addMember(record, actor, 'owner');
+    this.audit(record, actor, 'workspace_created', record.workspace.name);
     this.options.log(`${actor} created workspace "${record.workspace.name}"`);
     this.save();
     return record.workspace.id;
@@ -514,16 +673,104 @@ export class WorkspaceHub {
 
   updateWorkspace(actor: AgentAddress, workspaceId: WorkspaceId, patch: Partial<Workspace>): void {
     const record = this.requireMembership(workspaceId, actor);
-    this.requireRole(record, actor, 'admin');
+    this.requireActive(record, actor);
+    this.requireCapability(record, actor, 'manage_workspace');
     const w = record.workspace;
-    if (typeof patch.name === 'string' && patch.name.trim()) w.name = patch.name.trim().slice(0, 60);
+    const changed: string[] = [];
+    if (typeof patch.name === 'string' && patch.name.trim() && patch.name.trim() !== w.name) {
+      w.name = patch.name.trim().slice(0, 60);
+      changed.push('name');
+    }
+    if (typeof patch.slug === 'string' && patch.slug.trim()) {
+      const wanted = slugify(patch.slug);
+      if (wanted && wanted !== w.slug) {
+        const taken = [...this.workspaces.values()].some(
+          (r) => r !== record && r.workspace.slug === wanted,
+        );
+        if (taken) throw new HubError('slug_taken', `Another workspace already uses "${wanted}".`);
+        w.slug = wanted;
+        changed.push('address');
+      }
+    }
     if (typeof patch.description === 'string') w.description = patch.description.slice(0, 280);
     if (typeof patch.icon === 'string' && patch.icon) w.icon = [...patch.icon][0] ?? w.icon;
     if (typeof patch.color === 'string' && /^#[0-9a-f]{6}$/i.test(patch.color)) w.color = patch.color;
-    if (patch.invitePolicy === 'anyone' || patch.invitePolicy === 'admins') w.invitePolicy = patch.invitePolicy;
-    if (typeof patch.discoverable === 'boolean') w.discoverable = patch.discoverable;
+    if (typeof patch.discoverable === 'boolean' && patch.discoverable !== w.discoverable) {
+      w.discoverable = patch.discoverable;
+      changed.push(patch.discoverable ? 'discoverable' : 'invitation-only');
+    }
+    if (typeof patch.acceptsJoinRequests === 'boolean') {
+      w.acceptsJoinRequests = patch.acceptsJoinRequests;
+    }
+    if (patch.domainJoin === 'open' || patch.domainJoin === 'request' || patch.domainJoin === 'off') {
+      w.domainJoin = patch.domainJoin;
+      changed.push(`domain joining ${patch.domainJoin}`);
+    }
+    if (Array.isArray(patch.emailDomains)) {
+      // A domain can only be claimed by somebody who has proved they read mail
+      // at it. Anything else in the list is dropped rather than refused, so an
+      // admin editing the other fields is not blocked by a stale entry.
+      const actorEmail = (this.identities.get(actor)?.email ?? '').toLowerCase();
+      const kept: string[] = [];
+      for (const raw of patch.emailDomains) {
+        const domain = String(raw).trim().toLowerCase();
+        if (!domain || domain.includes('@')) continue;
+        // Already claimed stays claimed; only additions need proof.
+        if (w.emailDomains.includes(domain) || actorEmail.endsWith(`@${domain}`)) {
+          if (!kept.includes(domain)) kept.push(domain);
+        }
+      }
+      if (kept.join(',') !== w.emailDomains.join(',')) {
+        w.emailDomains = kept;
+        changed.push(`email domains (${kept.length})`);
+      }
+    }
+    if (Array.isArray(patch.defaultChannels)) {
+      // Only names that exist, so a new member is never promised a channel the
+      // workspace does not have.
+      const known = new Set(
+        [...record.channels.values()]
+          .filter((c) => c.channel.kind === 'public' && !c.channel.archived)
+          .map((c) => c.channel.name),
+      );
+      const names = [...new Set(patch.defaultChannels.filter((n) => known.has(n)))];
+      const general = [...record.channels.values()].find((c) => c.channel.isDefault);
+      if (general && !names.includes(general.channel.name)) names.unshift(general.channel.name);
+      w.defaultChannels = names;
+      changed.push('default channels');
+    }
     w.updatedAt = Date.now();
+    this.audit(record, actor, 'workspace_updated', w.name, changed.join(', ') || undefined);
     this.broadcast(record, { type: 'workspace.updated', workspace: w });
+    this.save();
+  }
+
+  /**
+   * Retune who can do what. Each floor is clamped on the way in, so a hostile
+   * or simply confused client cannot hand `manage_members` to guests.
+   */
+  setPermissions(
+    actor: AgentAddress,
+    workspaceId: WorkspaceId,
+    patch: Partial<WorkspacePermissions>,
+  ): void {
+    const record = this.requireMembership(workspaceId, actor);
+    this.requireActive(record, actor);
+    this.requireRole(record, actor, 'admin');
+    const permissions = record.workspace.permissions;
+    const changed: string[] = [];
+    for (const [key, value] of Object.entries(patch) as [Capability, WorkspaceRole][]) {
+      if (!(key in permissions)) continue;
+      if (!['owner', 'admin', 'member', 'guest'].includes(value)) continue;
+      const next = clampCapability(key, value);
+      if (permissions[key] === next) continue;
+      permissions[key] = next;
+      changed.push(`${key}=${next}`);
+    }
+    if (!changed.length) return;
+    record.workspace.updatedAt = Date.now();
+    this.audit(record, actor, 'permissions_changed', record.workspace.name, changed.join(', '));
+    this.broadcast(record, { type: 'workspace.updated', workspace: record.workspace });
     this.save();
   }
 
@@ -550,15 +797,33 @@ export class WorkspaceHub {
     address: AgentAddress,
     role: WorkspaceRole,
     channels: ChannelId[] = [],
+    invitedBy?: AgentAddress,
   ): void {
     if (record.members.has(address)) return;
-    record.members.set(address, { address, role, joinedAt: Date.now(), deactivated: false });
+    record.members.set(address, {
+      address,
+      role,
+      joinedAt: Date.now(),
+      deactivated: false,
+      // A guest let in through a specific channel stays in that channel. Any
+      // other role gets the usual defaults.
+      guestChannels: role === 'guest' ? [...channels] : undefined,
+      invitedBy,
+    });
+    // The home workspace has no creator to be its primary owner; the first
+    // person through the door takes the seat.
+    if (!record.workspace.primaryOwner && role === 'owner') {
+      record.workspace.primaryOwner = address;
+    }
 
-    // Drop them into the default channels, plus anything the invite named.
+    // Drop them into the default channels, plus anything the invite named. A
+    // confined guest is the exception: they get exactly what they were given.
     const wanted = new Set(channels);
-    for (const entry of record.channels.values()) {
-      if (entry.channel.kind === 'public' && entry.channel.isDefault) wanted.add(entry.channel.id);
-      if (record.workspace.defaultChannels.includes(entry.channel.name)) wanted.add(entry.channel.id);
+    if (role !== 'guest' || channels.length === 0) {
+      for (const entry of record.channels.values()) {
+        if (entry.channel.kind === 'public' && entry.channel.isDefault) wanted.add(entry.channel.id);
+        if (record.workspace.defaultChannels.includes(entry.channel.name)) wanted.add(entry.channel.id);
+      }
     }
     for (const channelId of wanted) {
       const entry = record.channels.get(channelId);
@@ -578,10 +843,13 @@ export class WorkspaceHub {
         });
       }
     }
+    // A confined guest is not announced to the whole workspace; they were let
+    // into one room, not into the company.
     const general = [...record.channels.values()].find((c) => c.channel.isDefault);
-    if (general) {
+    if (general && !this.confinedTo(record, address)) {
       this.postSystem(record, general, address, 'member_joined', '');
     }
+    this.audit(record, invitedBy ?? address, 'member_joined', address, role);
   }
 
   joinWorkspace(actor: AgentAddress, input: { code?: string; slug?: string }): WorkspaceId {
@@ -592,9 +860,12 @@ export class WorkspaceHub {
         if (!invite) continue;
         const problem = inviteIsUsable(invite, actor);
         if (problem) throw new HubError('bad_invite', problem);
-        if (record.members.has(actor)) return record.workspace.id;
+        if (record.members.has(actor)) {
+          this.requireActive(record, actor);
+          return record.workspace.id;
+        }
         invite.uses++;
-        this.addMember(record, actor, invite.role, invite.channels);
+        this.addMember(record, actor, invite.role, invite.channels, invite.createdBy);
         this.options.log(`${actor} joined "${record.workspace.name}" by invitation`);
         this.save();
         return record.workspace.id;
@@ -602,14 +873,18 @@ export class WorkspaceHub {
       throw new HubError('bad_invite', 'That invitation code is not valid on this relay.');
     }
 
-    const slug = (input.slug ?? '').trim().toLowerCase().replace(/^#/, '');
-    const record = [...this.workspaces.values()].find(
-      (r) => r.workspace.slug === slug || r.workspace.id === slug,
-    );
-    if (!record) throw new HubError('no_workspace', `No workspace called "${slug}" on this relay.`);
-    if (record.members.has(actor)) return record.workspace.id;
+    const record = this.bySlug(input.slug ?? '');
+    if (record.members.has(actor)) {
+      this.requireActive(record, actor);
+      return record.workspace.id;
+    }
     if (!record.workspace.discoverable) {
-      throw new HubError('forbidden', `${record.workspace.name} is invitation-only.`);
+      throw new HubError(
+        'forbidden',
+        record.workspace.acceptsJoinRequests
+          ? `${record.workspace.name} is invitation-only. You can ask an admin to let you in.`
+          : `${record.workspace.name} is invitation-only.`,
+      );
     }
     this.addMember(record, actor, 'member');
     this.options.log(`${actor} joined "${record.workspace.name}"`);
@@ -617,29 +892,339 @@ export class WorkspaceHub {
     return record.workspace.id;
   }
 
+  // -------------------------------------------------------------------------
+  // Accounts and email domains
+  // -------------------------------------------------------------------------
+
+  /**
+   * Told by the auth layer that this address belongs to a verified person,
+   * before any socket has opened as them. It seeds the identity so a workspace
+   * created during sign-up already has a name against it, and so the relay can
+   * later check that whoever connects as this address really is them.
+   */
+  registerAccount(address: AgentAddress, displayName: string, email: string): void {
+    const existing = this.identities.get(address);
+    this.identities.set(address, {
+      profile: existing?.profile ?? {
+        address,
+        displayName,
+        title: '',
+        role: 'ic',
+        team: '',
+        timezone: 'UTC',
+        bio: '',
+        focusAreas: [],
+        online: false,
+        lastSeen: Date.now(),
+      },
+      presence: existing?.presence ?? 'offline',
+      status: existing?.status ?? emptyStatus(),
+      lastSeen: existing?.lastSeen ?? Date.now(),
+      online: existing?.online ?? false,
+      email,
+    });
+    if (existing?.profile && !existing.profile.displayName) {
+      existing.profile.displayName = displayName;
+    }
+    this.save();
+  }
+
+  /**
+   * Claim an email domain for a workspace. Only somebody who has proved they
+   * read mail at that domain can — otherwise claiming `@bigco.com` would be a
+   * way to intercept a whole company's sign-ups.
+   */
+  claimEmailDomain(actor: AgentAddress, workspaceId: WorkspaceId, domain: string): void {
+    const record = this.requireMembership(workspaceId, actor);
+    this.requireCapability(record, actor, 'manage_workspace');
+    const clean = domain.trim().toLowerCase();
+    if (!clean || clean.includes('@')) throw new HubError('bad_domain', 'That is not a domain.');
+    const actorEmail = this.identities.get(actor)?.email ?? '';
+    if (!actorEmail.toLowerCase().endsWith(`@${clean}`)) {
+      throw new HubError(
+        'forbidden',
+        `Only somebody with an @${clean} address can claim it for a workspace.`,
+      );
+    }
+    if (!record.workspace.emailDomains.includes(clean)) {
+      record.workspace.emailDomains.push(clean);
+      record.workspace.updatedAt = Date.now();
+      this.audit(record, actor, 'workspace_updated', record.workspace.name, `claimed @${clean}`);
+      this.broadcast(record, { type: 'workspace.updated', workspace: record.workspace });
+      this.save();
+    }
+  }
+
+  releaseEmailDomain(actor: AgentAddress, workspaceId: WorkspaceId, domain: string): void {
+    const record = this.requireMembership(workspaceId, actor);
+    this.requireCapability(record, actor, 'manage_workspace');
+    const clean = domain.trim().toLowerCase();
+    const idx = record.workspace.emailDomains.indexOf(clean);
+    if (idx < 0) return;
+    record.workspace.emailDomains.splice(idx, 1);
+    record.workspace.updatedAt = Date.now();
+    this.audit(record, actor, 'workspace_updated', record.workspace.name, `released @${clean}`);
+    this.broadcast(record, { type: 'workspace.updated', workspace: record.workspace });
+    this.save();
+  }
+
+  /**
+   * What sign-up shows after the code is typed: the workspaces this person is
+   * already welcome in, either because they are in them or because their email
+   * domain is. This is the step that turns "here is an empty app" into "your
+   * team is already here".
+   */
+  workspacesForEmail(
+    address: AgentAddress,
+    domain: string,
+  ): {
+    id: WorkspaceId;
+    slug: string;
+    name: string;
+    description: string;
+    icon: string;
+    color: string;
+    memberCount: number;
+    joined: boolean;
+    how: 'open' | 'request';
+  }[] {
+    const clean = domain.trim().toLowerCase();
+    const out = [];
+    for (const record of this.workspaces.values()) {
+      const member = record.members.get(address);
+      const joined = Boolean(member && !member.deactivated);
+      const claimed = clean && record.workspace.emailDomains.includes(clean);
+      const domainOpen = claimed && record.workspace.domainJoin !== 'off';
+      if (!joined && !domainOpen && !record.workspace.discoverable) continue;
+      out.push({
+        id: record.workspace.id,
+        slug: record.workspace.slug,
+        name: record.workspace.name,
+        description: record.workspace.description,
+        icon: record.workspace.icon,
+        color: record.workspace.color,
+        memberCount: [...record.members.values()].filter((m) => !m.deactivated).length,
+        joined,
+        how: (domainOpen && record.workspace.domainJoin === 'request'
+          ? 'request'
+          : 'open') as 'open' | 'request',
+      });
+    }
+    // Where your colleagues already are comes before anything merely public.
+    return out.sort(
+      (a, b) => Number(b.joined) - Number(a.joined) || b.memberCount - a.memberCount,
+    );
+  }
+
+  /** Walk in on the strength of a verified email domain. */
+  joinByDomain(actor: AgentAddress, workspaceId: WorkspaceId, domain: string): WorkspaceId {
+    const record = this.require(workspaceId);
+    const clean = domain.trim().toLowerCase();
+    const existing = record.members.get(actor);
+    if (existing) {
+      if (existing.deactivated) {
+        throw new HubError('deactivated', 'That account has been deactivated in this workspace.');
+      }
+      return workspaceId;
+    }
+    const claimed = clean && record.workspace.emailDomains.includes(clean);
+    if (!claimed || record.workspace.domainJoin !== 'open') {
+      if (!record.workspace.discoverable) {
+        throw new HubError('forbidden', `${record.workspace.name} is invitation-only.`);
+      }
+    }
+    this.addMember(record, actor, 'member');
+    this.options.log(`${actor} joined "${record.workspace.name}" by email domain`);
+    this.save();
+    return workspaceId;
+  }
+
+  /** Invitations addressed to one email, across every workspace on the relay. */
+  invitationsForEmail(email: string): Invite[] {
+    const key = email.trim().toLowerCase();
+    const now = Date.now();
+    const out: Invite[] = [];
+    for (const record of this.workspaces.values()) {
+      for (const invite of record.invites.values()) {
+        if (invite.invitedEmail?.toLowerCase() !== key) continue;
+        if (invite.revoked) continue;
+        if (invite.expiresAt && invite.expiresAt < now) continue;
+        if (invite.maxUses && invite.uses >= invite.maxUses) continue;
+        out.push(invite);
+      }
+    }
+    return out.sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  /** The safe-to-show summary of one workspace, for the sign-up screens. */
+  publicView(workspaceId: WorkspaceId): {
+    id: WorkspaceId;
+    slug: string;
+    name: string;
+    icon: string;
+    color: string;
+    memberCount: number;
+  } {
+    const record = this.require(workspaceId);
+    return {
+      id: record.workspace.id,
+      slug: record.workspace.slug,
+      name: record.workspace.name,
+      icon: record.workspace.icon,
+      color: record.workspace.color,
+      memberCount: record.members.size,
+    };
+  }
+
+  private bySlug(raw: string): WorkspaceRecord {
+    const slug = raw.trim().toLowerCase().replace(/^#/, '');
+    const record = [...this.workspaces.values()].find(
+      (r) => r.workspace.slug === slug || r.workspace.id === slug,
+    );
+    if (!record) throw new HubError('no_workspace', `No workspace called "${slug}" on this relay.`);
+    return record;
+  }
+
+  // -------------------------------------------------------------------------
+  // Join requests
+  // -------------------------------------------------------------------------
+
+  /**
+   * Ask to be let into a workspace you cannot join on your own. The alternative
+   * is an invite code passed around out of band, which is how they end up
+   * pasted into channels that outlive the person who needed them.
+   */
+  requestJoin(actor: AgentAddress, slug: string, message = ''): WorkspaceId {
+    const record = this.bySlug(slug);
+    if (record.members.has(actor)) {
+      throw new HubError('already_member', `You are already in ${record.workspace.name}.`);
+    }
+    if (!record.workspace.acceptsJoinRequests) {
+      throw new HubError('forbidden', `${record.workspace.name} is not taking requests.`);
+    }
+    const existing = [...record.joinRequests.values()].find(
+      (r) => r.address === actor && r.state === 'pending',
+    );
+    if (existing) return record.workspace.id;
+
+    const request: JoinRequest = {
+      id: id('req'),
+      workspaceId: record.workspace.id,
+      address: actor,
+      displayName: this.identities.get(actor)?.profile.displayName ?? actor.split('@')[0]!,
+      message: message.trim().slice(0, 280),
+      createdAt: Date.now(),
+      state: 'pending',
+    };
+    record.joinRequests.set(request.id, request);
+    this.audit(record, actor, 'join_requested', actor, request.message || undefined);
+    for (const [address, member] of record.members) {
+      if (!atLeast(member.role, 'admin') || member.deactivated) continue;
+      this.deliver(address, {
+        type: 'workspace.join_requested',
+        workspaceId: record.workspace.id,
+        request,
+      });
+    }
+    this.save();
+    return record.workspace.id;
+  }
+
+  reviewJoin(
+    actor: AgentAddress,
+    workspaceId: WorkspaceId,
+    requestId: string,
+    approve: boolean,
+    role: WorkspaceRole = 'member',
+  ): void {
+    const record = this.requireMembership(workspaceId, actor);
+    this.requireActive(record, actor);
+    this.requireCapability(record, actor, 'manage_members');
+    const request = record.joinRequests.get(requestId);
+    if (!request) throw new HubError('no_request', 'That request no longer exists.');
+    if (request.state !== 'pending') {
+      throw new HubError('already_decided', 'Somebody has already answered that one.');
+    }
+    if (role === 'owner') this.requireRole(record, actor, 'owner');
+
+    request.state = approve ? 'approved' : 'denied';
+    request.decidedBy = actor;
+    request.decidedAt = Date.now();
+    if (approve) {
+      request.role = role;
+      this.addMember(record, request.address, role, [], actor);
+    }
+    this.audit(record, actor, approve ? 'join_approved' : 'join_denied', request.address);
+    this.deliver(request.address, {
+      type: 'workspace.join_decided',
+      workspaceId,
+      workspaceName: record.workspace.name,
+      approved: approve,
+    });
+    if (approve) this.sendSnapshot(request.address, workspaceId);
+    this.broadcastJoinRequests(record);
+    this.save();
+  }
+
+  listJoinRequests(actor: AgentAddress, workspaceId: WorkspaceId): ServerMessage {
+    const record = this.requireMembership(workspaceId, actor);
+    this.requireCapability(record, actor, 'manage_members');
+    return {
+      type: 'workspace.join_requests.result',
+      workspaceId,
+      requests: [...record.joinRequests.values()].sort((a, b) => b.createdAt - a.createdAt),
+    };
+  }
+
+  private broadcastJoinRequests(record: WorkspaceRecord): void {
+    const requests = [...record.joinRequests.values()].sort((a, b) => b.createdAt - a.createdAt);
+    for (const [address, member] of record.members) {
+      if (!atLeast(member.role, 'admin') || member.deactivated) continue;
+      this.deliver(address, {
+        type: 'workspace.join_requests.result',
+        workspaceId: record.workspace.id,
+        requests,
+      });
+    }
+  }
+
   leaveWorkspace(actor: AgentAddress, workspaceId: WorkspaceId): void {
     const record = this.requireMembership(workspaceId, actor);
-    if (this.roleOf(record, actor) === 'owner') {
+    if (this.isPrimaryOwner(record, actor)) {
       const others = [...record.members.values()].filter((m) => m.address !== actor && !m.deactivated);
       if (others.length) {
         throw new HubError(
           'owner_must_transfer',
-          'Make somebody else an owner before you leave, or delete the workspace.',
+          'Hand the workspace to somebody else before you leave, or delete it.',
         );
       }
     }
+    this.audit(record, actor, 'member_left', actor);
     this.removeMemberInternal(record, actor, `You left ${record.workspace.name}.`);
     this.save();
   }
 
-  removeMember(actor: AgentAddress, workspaceId: WorkspaceId, address: AgentAddress): void {
+  removeMember(
+    actor: AgentAddress,
+    workspaceId: WorkspaceId,
+    input: { address?: AgentAddress; addresses?: AgentAddress[] },
+  ): void {
     const record = this.requireMembership(workspaceId, actor);
-    this.requireRole(record, actor, 'admin');
-    if (address === actor) throw new HubError('bad_request', 'Use "leave workspace" to remove yourself.');
-    const target = record.members.get(address);
-    if (!target) throw new HubError('not_a_member', 'They are not in this workspace.');
-    if (atLeast(target.role, 'owner')) throw new HubError('forbidden', 'An owner cannot be removed.');
-    this.removeMemberInternal(record, address, `You were removed from ${record.workspace.name}.`);
+    this.requireActive(record, actor);
+    this.requireCapability(record, actor, 'manage_members');
+    const addresses = this.targets(input);
+    // Check the whole batch before applying any of it: a bulk action that
+    // half-succeeds is worse than one that refuses.
+    for (const address of addresses) {
+      if (address === actor) {
+        throw new HubError('bad_request', 'Use "leave workspace" to remove yourself.');
+      }
+      this.requireOutranks(record, actor, address);
+    }
+    for (const address of addresses) {
+      this.audit(record, actor, 'member_removed', address);
+      this.removeMemberInternal(record, address, `You were removed from ${record.workspace.name}.`);
+    }
     this.save();
   }
 
@@ -659,39 +1244,178 @@ export class WorkspaceHub {
     if (general) this.postSystem(record, general, address, 'member_left', '');
   }
 
-  setRole(actor: AgentAddress, workspaceId: WorkspaceId, address: AgentAddress, role: WorkspaceRole): void {
+  /**
+   * Deactivation, not deletion. Slack's default for somebody who leaves the
+   * company: the account stops working, everything they wrote stays where it
+   * is, and the decision is reversible if they come back.
+   */
+  setActive(
+    actor: AgentAddress,
+    workspaceId: WorkspaceId,
+    input: { address?: AgentAddress; addresses?: AgentAddress[] },
+    active: boolean,
+  ): void {
     const record = this.requireMembership(workspaceId, actor);
-    this.requireRole(record, actor, 'admin');
-    const target = record.members.get(address);
-    if (!target) throw new HubError('not_a_member', 'They are not in this workspace.');
-
-    const actorRole = this.roleOf(record, actor)!;
-    if (role === 'owner' && actorRole !== 'owner') {
-      throw new HubError('forbidden', 'Only an owner can hand over ownership.');
+    this.requireActive(record, actor);
+    this.requireCapability(record, actor, 'manage_members');
+    const addresses = this.targets(input);
+    for (const address of addresses) {
+      if (address === actor) {
+        throw new HubError('bad_request', 'You cannot deactivate your own account.');
+      }
+      this.requireOutranks(record, actor, address);
     }
-    if (target.role === 'owner' && actorRole !== 'owner') {
-      throw new HubError('forbidden', 'Only an owner can change another owner.');
-    }
-    if (target.role === 'owner' && address !== actor) {
-      // Demoting the last owner would strand the workspace.
-      const owners = [...record.members.values()].filter((m) => m.role === 'owner');
-      if (owners.length <= 1 && role !== 'owner') {
-        throw new HubError('forbidden', 'A workspace always needs at least one owner.');
+    for (const address of addresses) {
+      const target = record.members.get(address)!;
+      if (target.deactivated === !active) continue;
+      target.deactivated = !active;
+      target.deactivatedAt = active ? undefined : Date.now();
+      target.deactivatedBy = active ? undefined : actor;
+      this.audit(record, actor, active ? 'member_reactivated' : 'member_deactivated', address);
+      this.broadcast(record, {
+        type: 'workspace.member',
+        workspaceId,
+        member: this.memberView(record, address)!,
+      });
+      if (!active) {
+        // Tell their client to close the workspace; the row stays for everybody
+        // else, greyed out.
+        this.deliver(address, {
+          type: 'workspace.removed',
+          workspaceId,
+          reason: `Your account in ${record.workspace.name} was deactivated.`,
+        });
+      } else {
+        this.sendSnapshot(address, workspaceId);
       }
     }
-    target.role = role;
-    const member = this.memberView(record, address)!;
-    this.broadcast(record, { type: 'workspace.member', workspaceId, member });
+    this.save();
+  }
+
+  setRole(
+    actor: AgentAddress,
+    workspaceId: WorkspaceId,
+    input: { address?: AgentAddress; addresses?: AgentAddress[] },
+    role: WorkspaceRole,
+    guestChannels?: ChannelId[],
+  ): void {
+    const record = this.requireMembership(workspaceId, actor);
+    this.requireActive(record, actor);
+    this.requireCapability(record, actor, 'manage_members');
+    const addresses = this.targets(input);
+    const actorRole = this.roleOf(record, actor)!;
+
+    for (const address of addresses) {
+      const target = record.members.get(address);
+      if (!target) throw new HubError('not_a_member', `${address} is not in this workspace.`);
+      if (role === 'owner' && actorRole !== 'owner') {
+        throw new HubError('forbidden', 'Only an owner can make somebody else an owner.');
+      }
+      // Stepping down from your own owner seat is allowed; reaching across at
+      // somebody else's is not.
+      if (address !== actor) this.requireOutranks(record, actor, address);
+      if (this.isPrimaryOwner(record, address) && role !== 'owner') {
+        throw new HubError(
+          'forbidden',
+          'The primary owner keeps the workspace until they hand it to somebody else.',
+        );
+      }
+      if (target.role === 'owner' && role !== 'owner') {
+        const owners = [...record.members.values()].filter((m) => m.role === 'owner' && !m.deactivated);
+        if (owners.length <= 1) {
+          throw new HubError('forbidden', 'A workspace always needs at least one owner.');
+        }
+      }
+    }
+
+    const scoped = (guestChannels ?? []).filter((c) => record.channels.has(c));
+    for (const address of addresses) {
+      const target = record.members.get(address)!;
+      const before = target.role;
+      target.role = role;
+      target.guestChannels = role === 'guest' ? scoped : undefined;
+
+      // A guest being confined loses everything outside their list; a guest
+      // being promoted keeps what they had and gains the defaults.
+      if (role === 'guest' && scoped.length) {
+        for (const entry of record.channels.values()) {
+          const idx = entry.channel.members.indexOf(address);
+          if (scoped.includes(entry.channel.id)) {
+            if (idx < 0) entry.channel.members.push(address);
+          } else if (idx >= 0) {
+            entry.channel.members.splice(idx, 1);
+          }
+        }
+        this.audit(record, actor, 'guest_channels_changed', address, `${scoped.length} channel(s)`);
+      }
+
+      if (before !== role) this.audit(record, actor, 'role_changed', address, `${before} → ${role}`);
+      this.broadcast(record, {
+        type: 'workspace.member',
+        workspaceId,
+        member: this.memberView(record, address)!,
+      });
+    }
+    // Channel membership moved under their feet, so their picture of the
+    // workspace has to be redrawn from scratch.
+    for (const address of addresses) {
+      if (record.members.get(address)?.deactivated) continue;
+      this.sendSnapshot(address, workspaceId);
+    }
+    this.save();
+  }
+
+  /**
+   * Hand the workspace over. Only the person holding it can, and the seat is
+   * never empty for an instant: the new owner is set before the old one drops
+   * to a plain owner.
+   */
+  transferOwnership(actor: AgentAddress, workspaceId: WorkspaceId, address: AgentAddress): void {
+    const record = this.requireMembership(workspaceId, actor);
+    this.requireActive(record, actor);
+    if (!this.isPrimaryOwner(record, actor)) {
+      throw new HubError('forbidden', 'Only the primary owner can hand the workspace over.');
+    }
+    if (address === actor) throw new HubError('bad_request', 'You already hold this workspace.');
+    const target = record.members.get(address);
+    if (!target) throw new HubError('not_a_member', 'They are not in this workspace.');
+    if (target.deactivated) {
+      throw new HubError('bad_request', 'Reactivate their account before handing it over.');
+    }
+
+    record.workspace.primaryOwner = address;
+    record.workspace.updatedAt = Date.now();
+    target.role = 'owner';
+    // The outgoing owner stays an owner rather than being demoted out of the
+    // room they built.
+    record.members.get(actor)!.role = 'owner';
+
+    this.audit(record, actor, 'ownership_transferred', address);
+    this.broadcast(record, { type: 'workspace.updated', workspace: record.workspace });
+    for (const who of [actor, address]) {
+      this.broadcast(record, {
+        type: 'workspace.member',
+        workspaceId,
+        member: this.memberView(record, who)!,
+      });
+    }
     this.save();
   }
 
   setWorkspaceProfile(
     actor: AgentAddress,
     workspaceId: WorkspaceId,
-    patch: { displayName?: string; title?: string },
+    patch: { address?: AgentAddress; displayName?: string; title?: string },
   ): void {
     const record = this.requireMembership(workspaceId, actor);
-    const entry = record.members.get(actor)!;
+    this.requireActive(record, actor);
+    const subject = patch.address ?? actor;
+    if (subject !== actor) {
+      this.requireCapability(record, actor, 'manage_members');
+      this.requireOutranks(record, actor, subject);
+    }
+    const entry = record.members.get(subject);
+    if (!entry) throw new HubError('not_a_member', 'They are not in this workspace.');
     if (patch.displayName !== undefined) {
       const trimmed = patch.displayName.trim().slice(0, 60);
       entry.displayName = trimmed || undefined;
@@ -700,7 +1424,8 @@ export class WorkspaceHub {
       const trimmed = patch.title.trim().slice(0, 80);
       entry.title = trimmed || undefined;
     }
-    const member = this.memberView(record, actor)!;
+    if (subject !== actor) this.audit(record, actor, 'profile_changed_by_admin', subject);
+    const member = this.memberView(record, subject)!;
     this.broadcast(record, { type: 'workspace.member', workspaceId, member });
     this.save();
   }
@@ -714,6 +1439,7 @@ export class WorkspaceHub {
     workspaceId: WorkspaceId,
     input: {
       invitedAddress?: AgentAddress;
+      invitedEmail?: string;
       role?: WorkspaceRole;
       expiresInHours?: number;
       maxUses?: number;
@@ -721,8 +1447,10 @@ export class WorkspaceHub {
     },
   ): Invite {
     const record = this.requireMembership(workspaceId, actor);
-    if (record.workspace.invitePolicy === 'admins') this.requireRole(record, actor, 'admin');
+    this.requireActive(record, actor);
+    this.requireCapability(record, actor, 'invite');
     const role: WorkspaceRole = input.role === 'guest' || input.role === 'admin' ? input.role : 'member';
+    // You can never invite somebody in above yourself.
     if (role === 'admin') this.requireRole(record, actor, 'admin');
 
     const hours = input.expiresInHours ?? 24 * 7;
@@ -736,11 +1464,19 @@ export class WorkspaceHub {
       maxUses: Math.max(0, input.maxUses ?? 0),
       uses: 0,
       invitedAddress: input.invitedAddress,
+      invitedEmail: input.invitedEmail?.trim().toLowerCase(),
       role,
       revoked: false,
       channels: (input.channels ?? []).filter((c) => record.channels.has(c)),
     };
     record.invites.set(invite.code, invite);
+    this.audit(
+      record,
+      actor,
+      'invite_created',
+      invite.invitedAddress ?? 'anyone with the code',
+      role,
+    );
     this.deliver(actor, { type: 'invite.created', workspaceId, invite });
 
     // A targeted invitation is worth telling the recipient about directly.
@@ -755,8 +1491,9 @@ export class WorkspaceHub {
     const record = this.requireMembership(workspaceId, actor);
     const invite = record.invites.get(code);
     if (!invite) throw new HubError('no_invite', 'That invitation no longer exists.');
-    if (invite.createdBy !== actor) this.requireRole(record, actor, 'admin');
+    if (invite.createdBy !== actor) this.requireCapability(record, actor, 'manage_invites');
     invite.revoked = true;
+    this.audit(record, actor, 'invite_revoked', invite.invitedAddress ?? invite.code);
     this.deliver(actor, { type: 'invite.list.result', workspaceId, invites: this.invitesFor(record, actor) });
     this.save();
   }
@@ -819,9 +1556,12 @@ export class WorkspaceHub {
     input: { name: string; kind?: 'public' | 'private'; topic?: string; purpose?: string; members?: AgentAddress[] },
   ): ChannelId {
     const record = this.requireMembership(workspaceId, actor);
-    if (this.roleOf(record, actor) === 'guest') {
-      throw new HubError('forbidden', 'Guests cannot create channels.');
-    }
+    this.requireActive(record, actor);
+    this.requireCapability(
+      record,
+      actor,
+      input.kind === 'private' ? 'create_private_channel' : 'create_public_channel',
+    );
     const validated = validateChannelName(input.name);
     if (!validated.ok) throw new HubError('bad_name', validated.error);
     const name = validated.name;
@@ -845,6 +1585,7 @@ export class WorkspaceHub {
       this.audience(record, entry),
     );
     this.postSystem(record, entry, actor, 'channel_created', name);
+    this.audit(record, actor, 'channel_created', `#${name}`, input.kind === 'private' ? 'private' : 'public');
     this.save();
     return entry.channel.id;
   }
@@ -860,6 +1601,8 @@ export class WorkspaceHub {
     if (entry.channel.kind === 'dm' || entry.channel.kind === 'group_dm') {
       throw new HubError('forbidden', 'Direct messages have no topic or name.');
     }
+    this.requireActive(record, actor);
+    this.requireCapability(record, actor, 'rename_channel');
     if (!entry.channel.members.includes(actor)) {
       this.requireRole(record, actor, 'admin');
     }
@@ -900,8 +1643,10 @@ export class WorkspaceHub {
     if (entry.channel.kind === 'dm' || entry.channel.kind === 'group_dm') {
       throw new HubError('forbidden', 'Direct messages cannot be archived.');
     }
-    if (entry.channel.createdBy !== actor) this.requireRole(record, actor, 'admin');
+    this.requireActive(record, actor);
+    if (entry.channel.createdBy !== actor) this.requireCapability(record, actor, 'archive_channel');
     entry.channel.archived = archived;
+    this.audit(record, actor, archived ? 'channel_archived' : 'channel_unarchived', `#${entry.channel.name}`);
     entry.channel.updatedAt = Date.now();
     this.postSystem(record, entry, actor, archived ? 'channel_archived' : 'channel_unarchived', '');
     this.broadcast(
@@ -1001,7 +1746,7 @@ export class WorkspaceHub {
     const record = this.requireMembership(workspaceId, actor);
     const out: ServerMessage[] = [];
     for (const entry of record.channels.values()) {
-      if (!this.canSee(entry, actor)) continue;
+      if (!this.canSee(record, entry, actor)) continue;
       out.push({ type: 'channel.upserted', workspaceId, channel: entry.channel });
     }
     return out;
@@ -1077,8 +1822,14 @@ export class WorkspaceHub {
     },
   ): Message {
     const record = this.requireMembership(input.workspaceId, actor);
+    this.requireActive(record, actor);
     const entry = this.requireVisible(record, input.channelId, actor);
     if (entry.channel.archived) throw new HubError('archived', 'That channel is archived.');
+    // Slack's "restrict #general" setting: the one channel everybody is in is
+    // also the one an announcement should not be lost in.
+    if (entry.channel.isDefault) {
+      this.requireCapability(record, actor, 'post_in_default_channel');
+    }
 
     const text = input.text.slice(0, 12_000);
     if (!text.trim() && !(input.refs ?? []).length) {
@@ -1102,7 +1853,9 @@ export class WorkspaceHub {
       if (root.threadRootId) root = entry.messages.find((m) => m.id === root!.threadRootId) ?? root;
     }
 
-    const members = this.membersView(record);
+    // A deactivated account cannot be mentioned: the point of switching
+    // somebody off is that work stops being routed to them.
+    const members = this.membersView(record).filter((m) => !m.deactivated);
     const resolved = resolveMentions(text, members);
     const now = Date.now();
     const message: Message = {
@@ -1225,12 +1978,16 @@ export class WorkspaceHub {
 
   editMessage(actor: AgentAddress, workspaceId: WorkspaceId, messageId: MessageId, text: string): void {
     const { record, entry, message } = this.locateMessage(workspaceId, messageId, actor);
+    this.requireActive(record, actor);
     if (message.author !== actor) throw new HubError('forbidden', 'You can only edit your own messages.');
     if (message.kind !== 'user') throw new HubError('forbidden', 'That message cannot be edited.');
     if (message.deletedAt) throw new HubError('gone', 'That message was deleted.');
     message.text = text.slice(0, 12_000);
     message.editedAt = Date.now();
-    const resolved = resolveMentions(message.text, this.membersView(record));
+    const resolved = resolveMentions(
+      message.text,
+      this.membersView(record).filter((m) => !m.deactivated),
+    );
     message.mentions = resolved.mentions.filter((a) => a !== actor);
     message.broadcast = resolved.broadcast;
     this.broadcast(record, { type: 'message.updated', workspaceId, message }, this.audience(record, entry));
@@ -1239,7 +1996,7 @@ export class WorkspaceHub {
 
   deleteMessage(actor: AgentAddress, workspaceId: WorkspaceId, messageId: MessageId): void {
     const { record, entry, message } = this.locateMessage(workspaceId, messageId, actor);
-    if (message.author !== actor) this.requireRole(record, actor, 'admin');
+    if (message.author !== actor) this.requireCapability(record, actor, 'delete_any_message');
     message.deletedAt = Date.now();
     message.text = '';
     message.refs = undefined;
@@ -1311,7 +2068,7 @@ export class WorkspaceHub {
     for (const entry of record.channels.values()) {
       const message = entry.messages.find((m) => m.id === messageId);
       if (!message) continue;
-      if (!this.canSee(entry, actor)) throw new HubError('forbidden', 'You do not have access to that channel.');
+      if (!this.canSee(record, entry, actor)) throw new HubError('forbidden', 'You do not have access to that channel.');
       return { record, entry, message };
     }
     throw new HubError('no_message', 'That message no longer exists.');
@@ -1391,7 +2148,7 @@ export class WorkspaceHub {
 
     if (terms.length) {
       for (const entry of record.channels.values()) {
-        if (!this.canSee(entry, actor)) continue;
+        if (!this.canSee(record, entry, actor)) continue;
         if (options.channelId && entry.channel.id !== options.channelId) continue;
         for (const message of entry.messages) {
           if (message.deletedAt || message.kind !== 'user') continue;
@@ -1478,12 +2235,14 @@ export class WorkspaceHub {
     if (!file) return;
     try {
       const payload = {
-        version: 2,
+        version: 3,
         defaultWorkspaceId: this.defaultWorkspaceId,
         workspaces: [...this.workspaces.values()].map((r) => ({
           workspace: r.workspace,
           members: [...r.members.values()],
           invites: [...r.invites.values()],
+          joinRequests: [...r.joinRequests.values()],
+          audit: r.audit,
           channels: [...r.channels.values()].map((c) => ({
             channel: c.channel,
             messages: c.messages,
@@ -1495,6 +2254,7 @@ export class WorkspaceHub {
           profile: i.profile,
           status: i.status,
           lastSeen: i.lastSeen,
+          email: i.email,
         })),
       };
       fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -1504,6 +2264,45 @@ export class WorkspaceHub {
     } catch (err) {
       this.options.log(`could not persist workspaces: ${(err as Error).message}`);
     }
+  }
+
+  /**
+   * Bring a workspace written by an older relay up to the current shape.
+   *
+   * The two things that must be invented rather than defaulted are the
+   * permission table (derived from the old single `invitePolicy` flag, so a
+   * workspace that was admins-only stays admins-only) and the primary owner
+   * (the earliest owner, who is almost always the person who created it).
+   */
+  private migrateWorkspace(
+    stored: Workspace & { invitePolicy?: 'anyone' | 'admins' },
+    members: MemberRecord[],
+  ): Workspace {
+    const permissions = { ...defaultPermissions(), ...(stored.permissions ?? {}) };
+    if (!stored.permissions && stored.invitePolicy === 'admins') permissions.invite = 'admin';
+    for (const capability of Object.keys(permissions) as Capability[]) {
+      permissions[capability] = clampCapability(capability, permissions[capability]);
+    }
+
+    let primaryOwner = stored.primaryOwner ?? '';
+    if (!primaryOwner || !members.some((m) => m.address === primaryOwner)) {
+      const owners = members.filter((m) => m.role === 'owner').sort((a, b) => a.joinedAt - b.joinedAt);
+      primaryOwner = owners[0]?.address ?? stored.createdBy ?? '';
+      if (primaryOwner && !members.some((m) => m.address === primaryOwner)) primaryOwner = '';
+    }
+
+    const migrated: Workspace = {
+      ...stored,
+      discoverable: stored.discoverable ?? true,
+      acceptsJoinRequests: stored.acceptsJoinRequests ?? true,
+      emailDomains: stored.emailDomains ?? [],
+      domainJoin: stored.domainJoin ?? 'open',
+      defaultChannels: stored.defaultChannels ?? [],
+      permissions,
+      primaryOwner,
+    };
+    delete (migrated as { invitePolicy?: unknown }).invitePolicy;
+    return migrated;
   }
 
   private restore(): void {
@@ -1519,16 +2318,24 @@ export class WorkspaceHub {
       const data = JSON.parse(raw) as {
         defaultWorkspaceId?: string;
         workspaces?: {
-          workspace: Workspace;
+          workspace: Workspace & { invitePolicy?: 'anyone' | 'admins' };
           members: MemberRecord[];
           invites: Invite[];
+          joinRequests?: JoinRequest[];
+          audit?: AuditEntry[];
           channels: { channel: Channel; messages: Message[]; reads: Record<string, number> }[];
         }[];
-        identities?: { address: string; profile: PublicProfile; status?: UserStatus; lastSeen?: number }[];
+        identities?: {
+          address: string;
+          profile: PublicProfile;
+          status?: UserStatus;
+          lastSeen?: number;
+          email?: string;
+        }[];
       };
       for (const entry of data.workspaces ?? []) {
         const record: WorkspaceRecord = {
-          workspace: { ...entry.workspace, discoverable: entry.workspace.discoverable ?? true },
+          workspace: this.migrateWorkspace(entry.workspace, entry.members),
           members: new Map(entry.members.map((m) => [m.address, m])),
           channels: new Map(
             entry.channels.map((c) => [
@@ -1537,6 +2344,8 @@ export class WorkspaceHub {
             ]),
           ),
           invites: new Map((entry.invites ?? []).map((i) => [i.code, i])),
+          joinRequests: new Map((entry.joinRequests ?? []).map((r) => [r.id, r])),
+          audit: entry.audit ?? [],
         };
         this.workspaces.set(record.workspace.id, record);
       }
@@ -1547,6 +2356,7 @@ export class WorkspaceHub {
           status: entry.status ?? emptyStatus(),
           lastSeen: entry.lastSeen ?? 0,
           online: false,
+          email: entry.email,
         });
       }
       if (data.defaultWorkspaceId && this.workspaces.has(data.defaultWorkspaceId)) {

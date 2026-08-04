@@ -92,7 +92,7 @@ export default function People({ state }: Props) {
             onClick={() => toggle(person.address)}
             style={
               selected.includes(person.address)
-                ? { borderColor: 'var(--accent)', background: 'rgba(110,168,254,0.07)' }
+                ? { borderColor: 'var(--accent)', background: 'var(--accent-tint)' }
                 : undefined
             }
           >

@@ -600,20 +600,61 @@ export default function ObsidianView({ extraViews = [] }: Props) {
 
   // -- theme -----------------------------------------------------------------
 
+  // Read by the mirror effect below without being one of its dependencies.
+  const vaultRef = useRef(vault);
+  vaultRef.current = vault;
+
+  // What the shell has resolved the appearance to. Watched rather than read
+  // once, because "match system" can flip while the app is open.
+  const [appTheme, setAppTheme] = useState<'dark' | 'light'>(() =>
+    document.documentElement.dataset.theme === 'light' ? 'light' : 'dark',
+  );
   useEffect(() => {
     const root = document.documentElement;
-    const theme =
-      vault.settings.theme === 'system'
-        ? window.matchMedia('(prefers-color-scheme: light)').matches
-          ? 'light'
-          : 'dark'
-        : vault.settings.theme;
-    root.dataset.vaultTheme = theme;
-    if (vault.settings.accentColor) root.style.setProperty('--accent', vault.settings.accentColor);
+    const read = () => setAppTheme(root.dataset.theme === 'light' ? 'light' : 'dark');
+    read();
+    const observer = new MutationObserver(read);
+    observer.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => observer.disconnect();
+  }, []);
+
+  /**
+   * The vault draws from the app's theme tokens, so nothing has to be stamped
+   * for it to follow — flipping the app flips the Knowledge tab with it, in the
+   * same shades, because they are literally the same values.
+   *
+   * What is still worth doing is keeping `.obsidian/app.json` truthful: the
+   * folder is a real Obsidian vault, and Obsidian opened on the same folder
+   * reads that key.
+   *
+   * This must fire on a change of theme and on nothing else. Writing the file
+   * touches the vault, which pushes new state, which re-renders this component
+   * — so an effect that depended on the vault object would write, be woken by
+   * its own write, and write again, with the file watcher reloading the tree
+   * under the editor each time round.
+   */
+  const mirroredTheme = useRef<string | null>(null);
+  useEffect(() => {
+    if (mirroredTheme.current === appTheme) return;
+    mirroredTheme.current = appTheme;
+    if (vaultRef.current.settings.theme !== appTheme) {
+      void vaultRef.current.saveSettings({ theme: appTheme });
+    }
+  }, [appTheme]);
+
+  // The accent is the one thing that is still the vault's own — kept in a
+  // variable of its own so leaving the tab does not leave a colour behind.
+  useEffect(() => {
+    const root = document.documentElement;
+    const previous = root.style.getPropertyValue('--vault-accent');
+    if (vault.settings.accentColor) {
+      root.style.setProperty('--vault-accent', vault.settings.accentColor);
+    }
     return () => {
-      delete root.dataset.vaultTheme;
+      if (previous) root.style.setProperty('--vault-accent', previous);
+      else root.style.removeProperty('--vault-accent');
     };
-  }, [vault.settings.accentColor, vault.settings.theme]);
+  }, [vault.settings.accentColor]);
 
   // -- sidebar resizing ------------------------------------------------------
 

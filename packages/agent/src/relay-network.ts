@@ -14,6 +14,8 @@ import type { ClientMessage, PublicProfile, ServerMessage } from '@ai-coworker/s
 import { RelayClient, type ConnectionState } from './relay-client.js';
 
 export interface RelayNetworkOptions {
+  /** The session to present on a given relay, if this person has signed in. */
+  sessionToken?: (relayUrl: string) => string | undefined;
   profile: () => PublicProfile;
   autoConnect?: boolean;
 }
@@ -55,7 +57,11 @@ export class RelayNetwork extends EventEmitter {
     const existing = this.clients.get(url);
     if (existing) return existing;
 
-    const client = new RelayClient({ url, profile: this.options.profile });
+    const client = new RelayClient({
+      url,
+      profile: this.options.profile,
+      sessionToken: () => this.options.sessionToken?.(url),
+    });
     this.clients.set(url, client);
     this.order.push(url);
 

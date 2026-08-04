@@ -194,13 +194,19 @@ export function WorkspaceSettingsDialog({
 }) {
   const w = workspace.workspace;
   const [name, setName] = useState(w.name);
+  const [slug, setSlug] = useState(w.slug);
   const [description, setDescription] = useState(w.description);
   const [icon, setIcon] = useState(w.icon);
   const [color, setColor] = useState(w.color);
   const [discoverable, setDiscoverable] = useState(w.discoverable);
-  const [invitePolicy, setInvitePolicy] = useState(w.invitePolicy);
+  const [acceptsJoinRequests, setAcceptsJoinRequests] = useState(w.acceptsJoinRequests);
+  const [defaultChannels, setDefaultChannels] = useState(w.defaultChannels);
   const [error, run, busy] = useAction();
   const canEdit = workspace.me.role === 'owner' || workspace.me.role === 'admin';
+  const publicChannels = workspace.channels
+    .filter((c) => c.channel.kind === 'public' && !c.channel.archived)
+    .map((c) => c.channel.name)
+    .sort((a, b) => (a === 'general' ? -1 : b === 'general' ? 1 : a.localeCompare(b)));
 
   return (
     <Modal title="Workspace settings" subtitle={`#${w.slug} · ${plural(workspace.members.length, 'member')}`} onClose={onClose}>
@@ -237,15 +243,11 @@ export function WorkspaceSettingsDialog({
           ))}
         </div>
       </Field>
-      <Field label="Who can invite people">
-        <select
-          value={invitePolicy}
-          disabled={!canEdit}
-          onChange={(e) => setInvitePolicy(e.target.value as typeof invitePolicy)}
-        >
-          <option value="anyone">Any member</option>
-          <option value="admins">Admins only</option>
-        </select>
+      <Field label="Workspace address" hint="What people type to find it. Changing it breaks old links.">
+        <div className="slug-input">
+          <span>#</span>
+          <input value={slug} disabled={!canEdit} onChange={(e) => setSlug(e.target.value)} />
+        </div>
       </Field>
       <Field label="Discovery" hint="Discoverable workspaces are listed to everyone on this relay.">
         <label className="check">
@@ -257,7 +259,41 @@ export function WorkspaceSettingsDialog({
           />
           Anyone on this relay can find and join
         </label>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={acceptsJoinRequests}
+            disabled={!canEdit}
+            onChange={(e) => setAcceptsJoinRequests(e.target.checked)}
+          />
+          People who find it can ask an admin to be let in
+        </label>
       </Field>
+      <Field
+        label="Channels new people land in"
+        hint="#general is always included. Everybody arrives already in these."
+      >
+        <div className="guest-channels">
+          {publicChannels.map((name) => (
+            <label className="check" key={name}>
+              <input
+                type="checkbox"
+                checked={name === 'general' || defaultChannels.includes(name)}
+                disabled={!canEdit || name === 'general'}
+                onChange={() =>
+                  setDefaultChannels((prev) =>
+                    prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name],
+                  )
+                }
+              />
+              #{name}
+            </label>
+          ))}
+        </div>
+      </Field>
+      <p className="hint">
+        Who is allowed to do what lives under <strong>Manage members → Permissions</strong>.
+      </p>
 
       <div className="row">
         <button
@@ -268,11 +304,13 @@ export function WorkspaceSettingsDialog({
               unwrap(
                 api.updateWorkspace(w.id, {
                   name: name.trim(),
+                  slug: slug.trim(),
                   description: description.trim(),
                   icon,
                   color,
                   discoverable,
-                  invitePolicy,
+                  acceptsJoinRequests,
+                  defaultChannels,
                 }),
               ),
             );
@@ -297,162 +335,6 @@ export function WorkspaceSettingsDialog({
           />
         </>
       ) : null}
-      {error ? <div className="error-text">{error}</div> : null}
-    </Modal>
-  );
-}
-
-export function InviteDialog({ workspace, onClose }: { workspace: WorkspaceView; onClose: () => void }) {
-  const [address, setAddress] = useState('');
-  const [copied, setCopied] = useState('');
-  const [error, run, busy] = useAction();
-  const invites = workspace.invites;
-
-  return (
-    <Modal
-      title={`Invite people to ${workspace.workspace.name}`}
-      subtitle="Share a code. Whoever has it can join from their own app."
-      onClose={onClose}
-    >
-      <Field
-        label="Invite one person (optional)"
-        hint="Leave blank for a code anybody can use. With an address, only that agent can redeem it."
-      >
-        <div className="row">
-          <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="sarah@northwind" />
-          <button
-            style={{ flex: '0 0 auto' }}
-            className="primary"
-            disabled={busy}
-            onClick={() =>
-              run(() => unwrap(api.createInvite(workspace.workspace.id, { invitedAddress: address.trim() || undefined })))
-            }
-          >
-            {busy ? 'Creating…' : 'Create invite'}
-          </button>
-        </div>
-      </Field>
-
-      {invites.length === 0 ? (
-        <div className="empty">No live invitations.</div>
-      ) : (
-        invites.map((invite) => (
-          <div className="card" key={invite.code}>
-            <div className="card-head">
-              <div>
-                <div className="card-title mono">{invite.code}</div>
-                <div className="card-sub">
-                  {invite.invitedAddress ? `For ${invite.invitedAddress}` : 'Anyone with the code'} ·{' '}
-                  {invite.expiresAt ? `expires ${relative(invite.expiresAt)}` : 'no expiry'}
-                  {invite.maxUses ? ` · ${invite.uses}/${invite.maxUses} used` : ''}
-                </div>
-              </div>
-              <div className="row" style={{ flex: '0 0 auto', gap: 6 }}>
-                <button
-                  onClick={() => {
-                    void navigator.clipboard?.writeText(invite.code);
-                    setCopied(invite.code);
-                    setTimeout(() => setCopied(''), 1500);
-                  }}
-                >
-                  {copied === invite.code ? 'Copied' : 'Copy'}
-                </button>
-                <button
-                  className="danger"
-                  onClick={() => run(() => unwrap(api.revokeInvite(workspace.workspace.id, invite.code)))}
-                >
-                  Revoke
-                </button>
-              </div>
-            </div>
-          </div>
-        ))
-      )}
-      {error ? <div className="error-text">{error}</div> : null}
-    </Modal>
-  );
-}
-
-export function MembersDialog({
-  workspace,
-  onClose,
-  onMessage,
-}: {
-  workspace: WorkspaceView;
-  onClose: () => void;
-  onMessage: (address: string) => void;
-}) {
-  const [query, setQuery] = useState('');
-  const [error, run] = useAction();
-  const canManage = workspace.me.role === 'owner' || workspace.me.role === 'admin';
-  const people = workspace.members.filter(
-    (m) =>
-      !query ||
-      m.displayName.toLowerCase().includes(query.toLowerCase()) ||
-      m.address.toLowerCase().includes(query.toLowerCase()),
-  );
-
-  return (
-    <Modal title={`${plural(workspace.members.length, 'member')}`} subtitle={workspace.workspace.name} onClose={onClose} wide>
-      <input placeholder="Find someone" value={query} onChange={(e) => setQuery(e.target.value)} autoFocus />
-      <div className="member-list">
-        {people.map((member) => (
-          <div className="member-row" key={member.address}>
-            <Avatar name={member.displayName} address={member.address} size={34} presence={member.presence} />
-            <div className="member-text">
-              <div className="member-name">
-                {member.displayName}
-                {member.address === workspace.me.address ? <span className="tag small">you</span> : null}
-                <span className={`tag small ${member.role === 'owner' ? 'accent' : ''}`}>{member.role}</span>
-              </div>
-              <div className="member-sub">
-                {member.title || member.address}
-                {member.status.emoji || member.status.text ? (
-                  <span className="member-status">
-                    {member.status.emoji} {member.status.text}
-                  </span>
-                ) : null}
-              </div>
-            </div>
-            <div className="member-actions">
-              {member.address === workspace.me.address ? null : (
-                <button
-                  onClick={() => {
-                    onMessage(member.address);
-                    onClose();
-                  }}
-                >
-                  Message
-                </button>
-              )}
-              {canManage && member.address !== workspace.me.address ? (
-                <>
-                  <select
-                    value={member.role}
-                    onChange={(e) =>
-                      run(() =>
-                        unwrap(
-                          api.setMemberRole(workspace.workspace.id, member.address, e.target.value as WorkspaceRole),
-                        ),
-                      )
-                    }
-                  >
-                    <option value="guest">guest</option>
-                    <option value="member">member</option>
-                    <option value="admin">admin</option>
-                    {workspace.me.role === 'owner' ? <option value="owner">owner</option> : null}
-                  </select>
-                  <ConfirmButton
-                    label="Remove"
-                    confirmLabel="Confirm"
-                    onConfirm={() => run(() => unwrap(api.removeMember(workspace.workspace.id, member.address)))}
-                  />
-                </>
-              ) : null}
-            </div>
-          </div>
-        ))}
-      </div>
       {error ? <div className="error-text">{error}</div> : null}
     </Modal>
   );
@@ -1012,6 +894,7 @@ const SHORTCUTS: { keys: string; what: string }[] = [
   { keys: '⌘⇧A', what: 'Activity' },
   { keys: '⌘⇧T', what: 'Threads' },
   { keys: '⌘N', what: 'New message' },
+  { keys: '⌘⇧L', what: 'Dark → light → match system' },
   { keys: 'Enter', what: 'Send' },
   { keys: 'Shift+Enter', what: 'New line' },
   { keys: '↑', what: 'Edit your last message' },

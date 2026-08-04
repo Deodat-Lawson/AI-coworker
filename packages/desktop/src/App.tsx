@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { isDirect } from '@ai-coworker/shared';
+import { isDirect, nextAppearance } from '@ai-coworker/shared';
 
+import { AdministrationDialog } from './components/Administration.js';
 import ChannelSidebar, { WorkspaceMenu, type Section } from './components/ChannelSidebar.js';
 import Onboarding from './components/Onboarding.js';
+import SignUp from './components/SignUp.js';
 import QuickSwitcher from './components/QuickSwitcher.js';
 import WorkspaceRail from './components/WorkspaceRail.js';
 import {
@@ -11,8 +13,6 @@ import {
   ChannelBrowser,
   ChannelDetailsDialog,
   CreateChannelDialog,
-  InviteDialog,
-  MembersDialog,
   NewDirectMessageDialog,
   ProfileCard,
   ShortcutsDialog,
@@ -21,6 +21,7 @@ import {
   WorkspaceSettingsDialog,
 } from './components/dialogs.js';
 import { api, emptyState, type AppState } from './lib/api.js';
+import { watchAppearance } from './lib/theme.js';
 import Activity from './views/Activity.js';
 import AgentChat from './views/AgentChat.js';
 import Chat from './views/Chat.js';
@@ -36,8 +37,7 @@ type Dialog =
   | { kind: 'none' }
   | { kind: 'add-workspace' }
   | { kind: 'workspace-settings' }
-  | { kind: 'invite' }
-  | { kind: 'members' }
+  | { kind: 'members'; tab?: 'members' | 'invitations' | 'requests' | 'permissions' | 'log' }
   | { kind: 'workspace-profile' }
   | { kind: 'create-channel' }
   | { kind: 'browse-channels' }
@@ -56,6 +56,7 @@ export default function App() {
   const [switcher, setSwitcher] = useState(false);
   const [wsMenu, setWsMenu] = useState(false);
   const [searching, setSearching] = useState(false);
+  const [demoSetup, setDemoSetup] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -76,6 +77,10 @@ export default function App() {
       offOpen();
     };
   }, []);
+
+  // The theme follows the chosen appearance, and keeps following the machine
+  // for as long as the choice is "system" — not just at startup.
+  useEffect(() => watchAppearance(state.appearance), [state.appearance]);
 
   const workspace = useMemo(
     () => state.workspaces.find((w) => w.workspace.id === state.activeWorkspaceId),
@@ -195,6 +200,16 @@ export default function App() {
         setSection('threads');
         return;
       }
+      // ⌘⇧L cycles dark → light → match system. Stamping it here as well as in
+      // the effect keeps the flip instant rather than waiting for the round trip
+      // through the main process that persists it.
+      if (mod && e.shiftKey && e.key.toLowerCase() === 'l') {
+        e.preventDefault();
+        const next = nextAppearance(state.appearance);
+        watchAppearance(next);
+        void api.setAppearance(next);
+        return;
+      }
       // ⌘N is "new note" inside the vault, the way it is in Obsidian.
       if (mod && !e.shiftKey && e.key.toLowerCase() === 'n' && section !== 'knowledge') {
         e.preventDefault();
@@ -229,7 +244,15 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [state.workspaces, state.activeChannelId, workspace, switchWorkspace, openChannel, section]);
+  }, [
+    state.workspaces,
+    state.activeChannelId,
+    state.appearance,
+    workspace,
+    switchWorkspace,
+    openChannel,
+    section,
+  ]);
 
   if (!loaded) {
     return (
@@ -240,7 +263,14 @@ export default function App() {
   }
 
   if (!state.ready) {
-    return <Onboarding state={state} />;
+    // Signing in is the front door; the demo personas are behind it, because a
+    // persona is a thing you reach for deliberately rather than the first choice
+    // somebody new is asked to make.
+    return demoSetup ? (
+      <Onboarding state={state} onBack={() => setDemoSetup(false)} />
+    ) : (
+      <SignUp state={state} onUseDemoPersona={() => setDemoSetup(true)} />
+    );
   }
 
   const closeDialog = () => setDialog({ kind: 'none' });
@@ -273,7 +303,7 @@ export default function App() {
             <WorkspaceMenu
               workspace={workspace}
               onClose={() => setWsMenu(false)}
-              onInvite={() => setDialog({ kind: 'invite' })}
+              onInvite={() => setDialog({ kind: 'members', tab: 'invitations' })}
               onMembers={() => setDialog({ kind: 'members' })}
               onProfile={() => setDialog({ kind: 'workspace-profile' })}
               onSettings={() => setDialog({ kind: 'workspace-settings' })}
@@ -370,12 +400,11 @@ export default function App() {
       {workspace && dialog.kind === 'workspace-settings' ? (
         <WorkspaceSettingsDialog workspace={workspace} onClose={closeDialog} />
       ) : null}
-      {workspace && dialog.kind === 'invite' ? (
-        <InviteDialog workspace={workspace} onClose={closeDialog} />
-      ) : null}
+
       {workspace && dialog.kind === 'members' ? (
-        <MembersDialog
+        <AdministrationDialog
           workspace={workspace}
+          initialTab={dialog.tab}
           onClose={closeDialog}
           onMessage={(address) => {
             setPendingDm(address);
