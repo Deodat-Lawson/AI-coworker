@@ -27,6 +27,7 @@ import {
   type SearchHit,
   type ServerMessage,
   type SystemEvent,
+  type TranscriptEntry,
   type UserStatus,
   type Workspace,
   type WorkspaceId,
@@ -1188,7 +1189,15 @@ export class WorkspaceHub {
     this.fanOut(record, entry, message);
   }
 
-  /** A meeting milestone, written into the channel it belongs to. */
+  /**
+   * A meeting milestone, written into the channel it belongs to.
+   *
+   * Pass `threadRootId` to hang the milestone under the meeting's own message
+   * instead of adding another row to the channel — that is what keeps a whole
+   * meeting to a single line in the timeline.
+   *
+   * Returns the message so the caller can use it as that thread root.
+   */
   postMeetingEvent(
     workspaceId: WorkspaceId,
     channelId: ChannelId | undefined,
@@ -1196,13 +1205,15 @@ export class WorkspaceHub {
     event: Extract<SystemEvent, 'meeting_scheduled' | 'meeting_started' | 'meeting_ended'>,
     text: string,
     meetingId: string,
-  ): void {
+    threadRootId?: MessageId,
+  ): Message | null {
     const record = this.workspaces.get(workspaceId);
-    if (!record) return;
+    if (!record) return null;
     const entry =
       (channelId ? record.channels.get(channelId) : undefined) ??
       [...record.channels.values()].find((c) => c.channel.isDefault);
-    if (!entry) return;
+    if (!entry) return null;
+    const root = threadRootId ? entry.messages.find((m) => m.id === threadRootId) : undefined;
     const message: Message = {
       id: id('msg'),
       workspaceId,
@@ -1213,14 +1224,82 @@ export class WorkspaceHub {
       kind: 'meeting',
       systemEvent: event,
       meetingId,
+      threadRootId: root?.id,
       replyCount: 0,
       replyUsers: [],
       reactions: [],
       mentions: [],
     };
     this.append(entry, message);
+    if (root) this.countReply(record, entry, root, message);
     this.fanOut(record, entry, message);
     this.save();
+    return message;
+  }
+
+  /**
+   * One turn of an agent meeting, written into the channel as a reply under the
+   * meeting's own message.
+   *
+   * A meeting *is* a thread: the channel keeps one readable row per meeting,
+   * and opening that thread is watching the room. Turns never touch the unread
+   * badge — thread replies do not — so a thirty-turn meeting does not read as
+   * thirty things somebody needs to catch up on.
+   */
+  postMeetingTurn(
+    workspaceId: WorkspaceId,
+    channelId: ChannelId,
+    rootId: MessageId,
+    meetingId: string,
+    turn: TranscriptEntry,
+  ): void {
+    const record = this.workspaces.get(workspaceId);
+    const entry = record?.channels.get(channelId);
+    if (!record || !entry) return;
+    const root = entry.messages.find((m) => m.id === rootId);
+    if (!root) return;
+
+    const message: Message = {
+      id: id('msg'),
+      workspaceId,
+      channelId: entry.channel.id,
+      author: turn.speaker,
+      text: turn.text,
+      ts: turn.ts,
+      kind: 'meeting',
+      meetingId,
+      threadRootId: root.id,
+      // The turn's own kind — question, assignment, commitment — so a reader
+      // can see the shape of the meeting without reading every word of it.
+      systemDetail: turn.kind,
+      replyCount: 0,
+      replyUsers: [],
+      reactions: [],
+      mentions: [],
+      refs: turn.refs?.length ? turn.refs : undefined,
+      viaAgent: turn.speaker === 'moderator' ? undefined : true,
+    };
+    this.append(entry, message);
+    this.countReply(record, entry, root, message);
+    this.fanOut(record, entry, message);
+    this.save();
+  }
+
+  /** Keep a thread root's reply counters honest, and tell the room about it. */
+  private countReply(
+    record: WorkspaceRecord,
+    entry: ChannelRecord,
+    root: Message,
+    reply: Message,
+  ): void {
+    root.replyCount++;
+    root.lastReplyAt = reply.ts;
+    if (!root.replyUsers.includes(reply.author)) root.replyUsers.push(reply.author);
+    this.broadcast(
+      record,
+      { type: 'message.updated', workspaceId: record.workspace.id, message: root },
+      this.audience(record, entry),
+    );
   }
 
   editMessage(actor: AgentAddress, workspaceId: WorkspaceId, messageId: MessageId, text: string): void {
@@ -1446,6 +1525,43 @@ export class WorkspaceHub {
     if (requested && this.workspaces.get(requested)?.members.has(organizer)) return requested;
     const mine = this.workspaceIdsFor(organizer);
     return mine[0] ?? this.defaultWorkspaceId;
+  }
+
+  /**
+   * The channel a meeting happens in.
+   *
+   * There is no such thing as a meeting room that is not a channel. A meeting
+   * booked from a channel runs in that channel; one booked from the agent
+   * directory runs in the direct conversation its people already share, so the
+   * booking, the meeting itself and everything said about it afterwards all sit
+   * in one place. The workspace's default channel is the last resort.
+   */
+  meetingChannel(
+    workspaceId: WorkspaceId,
+    organizer: AgentAddress,
+    participants: AgentAddress[],
+    requested?: ChannelId,
+  ): ChannelId | undefined {
+    const record = this.workspaces.get(workspaceId);
+    if (!record) return undefined;
+
+    if (requested) {
+      const entry = record.channels.get(requested);
+      if (entry && !entry.channel.archived && this.canSee(entry, organizer)) return entry.channel.id;
+    }
+
+    const others = participants.filter((a) => a !== organizer && record.members.has(a));
+    if (others.length) {
+      try {
+        return this.openDm(organizer, workspaceId, others);
+      } catch {
+        // Too many people for a group message, or somebody left mid-negotiation.
+        // Fall through rather than losing the meeting.
+      }
+    }
+
+    return [...record.channels.values()].find((c) => c.channel.isDefault && !c.channel.archived)
+      ?.channel.id;
   }
 
   sharesWorkspace(workspaceId: WorkspaceId, addresses: AgentAddress[]): AgentAddress[] {

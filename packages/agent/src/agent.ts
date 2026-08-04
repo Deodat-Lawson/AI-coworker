@@ -1118,6 +1118,10 @@ export class PersonalAgent extends EventEmitter {
     if (message.author === state.me.address) return;
     if (message.kind === 'system') return;
     if (message.deletedAt) return;
+    // A meeting is a thread, and a thread of forty agent turns is not forty
+    // interruptions. The milestones — booked, under way, finished — carry a
+    // `systemEvent` and are worth a word; the turns inside are not.
+    if (message.kind === 'meeting' && message.threadRootId && !message.systemEvent) return;
 
     const channel = state.channels.get(message.channelId);
     if (!channel) return;

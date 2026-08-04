@@ -20,6 +20,7 @@ import {
   type PublicProfile,
   type ServerMessage,
   type TimeSlot,
+  type TranscriptEntry,
   MINUTE,
   formatTime,
   id,
@@ -49,6 +50,12 @@ interface ScheduledMeeting {
   meeting: Meeting;
   timer: NodeJS.Timeout | null;
   room: MeetingRoom | null;
+  /**
+   * The channel message the whole meeting hangs off. Booking posts it, the room
+   * replies into it turn by turn, and the minutes close it out — one row in the
+   * channel from first request to last word.
+   */
+  rootMessageId?: string;
 }
 
 export interface RelayOptions {
@@ -394,6 +401,12 @@ export class Relay extends EventEmitter {
               reason: message.reason,
             });
           }
+          // Say so where it was booked, so nobody is left waiting on it.
+          this.announceMeeting(
+            entry,
+            'meeting_ended',
+            `*${entry.meeting.title}* was cancelled by ${address} — ${message.reason}`,
+          );
           this.meetings.delete(message.meetingId);
         }
         break;
@@ -568,10 +581,19 @@ export class Relay extends EventEmitter {
     }
 
     const slot = common[0]!;
+    const workspaceId =
+      request.workspaceId ?? this.hub.resolveMeetingWorkspace(request.organizer);
     const meeting: Meeting = {
       id: id('mtg'),
-      workspaceId: request.workspaceId ?? this.hub.resolveMeetingWorkspace(request.organizer),
-      channelId: request.channelId,
+      workspaceId,
+      // Every meeting lands in a channel: the one it was booked from, or the
+      // conversation these people already have.
+      channelId: this.hub.meetingChannel(
+        workspaceId,
+        request.organizer,
+        request.participants,
+        request.channelId,
+      ),
       title: request.title,
       purpose: request.purpose,
       kind: request.kind,
@@ -597,23 +619,47 @@ export class Relay extends EventEmitter {
     for (const participant of meeting.participants) {
       this.send(participant, { type: 'meeting.scheduled', meeting });
     }
-    this.announceMeeting(meeting, 'meeting_scheduled', `booked *${meeting.title}* for ${formatTime(meeting.start)}`);
+    entry.rootMessageId = this.announceMeeting(
+      entry,
+      'meeting_scheduled',
+      `booked *${meeting.title}* for ${formatTime(meeting.start)}`,
+    );
     this.emit('meeting.scheduled', meeting);
   }
 
-  /** Meetings are workspace events, so they show up in the channel too. */
+  /**
+   * Meetings are workspace events, so they show up in the channel — and after
+   * the first one they show up *inside* it, as replies under the meeting's own
+   * message. Returns the id of the message that was written.
+   */
   private announceMeeting(
-    meeting: Meeting,
+    entry: ScheduledMeeting,
     event: 'meeting_scheduled' | 'meeting_started' | 'meeting_ended',
     text: string,
-  ): void {
-    this.hub.postMeetingEvent(
+  ): string | undefined {
+    const { meeting } = entry;
+    const message = this.hub.postMeetingEvent(
       meeting.workspaceId,
       meeting.channelId,
       meeting.organizer,
       event,
       text,
       meeting.id,
+      entry.rootMessageId,
+    );
+    return entry.rootMessageId ?? message?.id;
+  }
+
+  /** Mirror one line of the room into the meeting's thread in the channel. */
+  private mirrorTurn(entry: ScheduledMeeting, turn: TranscriptEntry): void {
+    const channelId = entry.meeting.channelId;
+    if (!channelId || !entry.rootMessageId) return;
+    this.hub.postMeetingTurn(
+      entry.meeting.workspaceId,
+      channelId,
+      entry.rootMessageId,
+      entry.meeting.id,
+      turn,
     );
   }
 
@@ -628,11 +674,12 @@ export class Relay extends EventEmitter {
       turnTimeoutMs: this.options.turnTimeoutMs,
       joinTimeoutMs: this.options.joinTimeoutMs,
       log: this.options.log,
+      onEntry: (turn) => this.mirrorTurn(entry, turn),
       onEnded: (finished) => {
         entry.meeting.status = finished.phase === 'closed' ? 'completed' : 'cancelled';
         this.meetings.delete(entry.meeting.id);
         this.announceMeeting(
-          entry.meeting,
+          entry,
           'meeting_ended',
           finished.phase === 'closed'
             ? `*${entry.meeting.title}* finished — ${finished.transcript.length} turns on the record.`
@@ -644,7 +691,13 @@ export class Relay extends EventEmitter {
     });
     entry.room = room;
     this.options.log(`opening room for "${entry.meeting.title}"`);
-    this.announceMeeting(entry.meeting, 'meeting_started', `*${entry.meeting.title}* is under way.`);
+    // A meeting restored from disk, or one started before the channel existed,
+    // has no thread yet — this announcement becomes its root.
+    entry.rootMessageId = this.announceMeeting(
+      entry,
+      'meeting_started',
+      `*${entry.meeting.title}* is under way.`,
+    );
     this.emit('meeting.live', entry.meeting);
     room.open();
   }

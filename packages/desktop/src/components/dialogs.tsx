@@ -185,123 +185,6 @@ export function AddWorkspaceDialog({ state, onClose }: { state: AppState; onClos
   );
 }
 
-export function WorkspaceSettingsDialog({
-  workspace,
-  onClose,
-}: {
-  workspace: WorkspaceView;
-  onClose: () => void;
-}) {
-  const w = workspace.workspace;
-  const [name, setName] = useState(w.name);
-  const [description, setDescription] = useState(w.description);
-  const [icon, setIcon] = useState(w.icon);
-  const [color, setColor] = useState(w.color);
-  const [discoverable, setDiscoverable] = useState(w.discoverable);
-  const [invitePolicy, setInvitePolicy] = useState(w.invitePolicy);
-  const [error, run, busy] = useAction();
-  const canEdit = workspace.me.role === 'owner' || workspace.me.role === 'admin';
-
-  return (
-    <Modal title="Workspace settings" subtitle={`#${w.slug} · ${plural(workspace.members.length, 'member')}`} onClose={onClose}>
-      {!canEdit ? <div className="banner warn">Only admins can change these.</div> : null}
-      <Field label="Name">
-        <input value={name} disabled={!canEdit} onChange={(e) => setName(e.target.value)} />
-      </Field>
-      <Field label="Description">
-        <input value={description} disabled={!canEdit} onChange={(e) => setDescription(e.target.value)} />
-      </Field>
-      <Field label="Icon and colour">
-        <div className="picker-row">
-          {WORKSPACE_ICONS.map((option) => (
-            <button
-              key={option}
-              className={`icon-choice ${icon === option ? 'on' : ''}`}
-              disabled={!canEdit}
-              onClick={() => setIcon(option)}
-            >
-              {option}
-            </button>
-          ))}
-        </div>
-        <div className="picker-row">
-          {WORKSPACE_COLORS.map((option) => (
-            <button
-              key={option}
-              className={`color-choice ${color === option ? 'on' : ''}`}
-              style={{ background: option }}
-              disabled={!canEdit}
-              onClick={() => setColor(option)}
-              aria-label={option}
-            />
-          ))}
-        </div>
-      </Field>
-      <Field label="Who can invite people">
-        <select
-          value={invitePolicy}
-          disabled={!canEdit}
-          onChange={(e) => setInvitePolicy(e.target.value as typeof invitePolicy)}
-        >
-          <option value="anyone">Any member</option>
-          <option value="admins">Admins only</option>
-        </select>
-      </Field>
-      <Field label="Discovery" hint="Discoverable workspaces are listed to everyone on this relay.">
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={discoverable}
-            disabled={!canEdit}
-            onChange={(e) => setDiscoverable(e.target.checked)}
-          />
-          Anyone on this relay can find and join
-        </label>
-      </Field>
-
-      <div className="row">
-        <button
-          className="primary"
-          disabled={!canEdit || busy}
-          onClick={async () => {
-            const ok = await run(() =>
-              unwrap(
-                api.updateWorkspace(w.id, {
-                  name: name.trim(),
-                  description: description.trim(),
-                  icon,
-                  color,
-                  discoverable,
-                  invitePolicy,
-                }),
-              ),
-            );
-            if (ok) onClose();
-          }}
-        >
-          {busy ? 'Saving…' : 'Save'}
-        </button>
-      </div>
-
-      {workspace.me.role === 'owner' ? (
-        <>
-          <h2>Danger zone</h2>
-          <p className="hint">Deleting removes the workspace and its history for everyone in it.</p>
-          <ConfirmButton
-            label="Delete this workspace"
-            confirmLabel="Really delete — this cannot be undone"
-            onConfirm={async () => {
-              const ok = await run(() => unwrap(api.deleteWorkspace(w.id)));
-              if (ok) onClose();
-            }}
-          />
-        </>
-      ) : null}
-      {error ? <div className="error-text">{error}</div> : null}
-    </Modal>
-  );
-}
-
 export function InviteDialog({ workspace, onClose }: { workspace: WorkspaceView; onClose: () => void }) {
   const [address, setAddress] = useState('');
   const [copied, setCopied] = useState('');
@@ -368,134 +251,6 @@ export function InviteDialog({ workspace, onClose }: { workspace: WorkspaceView;
           </div>
         ))
       )}
-      {error ? <div className="error-text">{error}</div> : null}
-    </Modal>
-  );
-}
-
-export function MembersDialog({
-  workspace,
-  onClose,
-  onMessage,
-}: {
-  workspace: WorkspaceView;
-  onClose: () => void;
-  onMessage: (address: string) => void;
-}) {
-  const [query, setQuery] = useState('');
-  const [error, run] = useAction();
-  const canManage = workspace.me.role === 'owner' || workspace.me.role === 'admin';
-  const people = workspace.members.filter(
-    (m) =>
-      !query ||
-      m.displayName.toLowerCase().includes(query.toLowerCase()) ||
-      m.address.toLowerCase().includes(query.toLowerCase()),
-  );
-
-  return (
-    <Modal title={`${plural(workspace.members.length, 'member')}`} subtitle={workspace.workspace.name} onClose={onClose} wide>
-      <input placeholder="Find someone" value={query} onChange={(e) => setQuery(e.target.value)} autoFocus />
-      <div className="member-list">
-        {people.map((member) => (
-          <div className="member-row" key={member.address}>
-            <Avatar name={member.displayName} address={member.address} size={34} presence={member.presence} />
-            <div className="member-text">
-              <div className="member-name">
-                {member.displayName}
-                {member.address === workspace.me.address ? <span className="tag small">you</span> : null}
-                <span className={`tag small ${member.role === 'owner' ? 'accent' : ''}`}>{member.role}</span>
-              </div>
-              <div className="member-sub">
-                {member.title || member.address}
-                {member.status.emoji || member.status.text ? (
-                  <span className="member-status">
-                    {member.status.emoji} {member.status.text}
-                  </span>
-                ) : null}
-              </div>
-            </div>
-            <div className="member-actions">
-              {member.address === workspace.me.address ? null : (
-                <button
-                  onClick={() => {
-                    onMessage(member.address);
-                    onClose();
-                  }}
-                >
-                  Message
-                </button>
-              )}
-              {canManage && member.address !== workspace.me.address ? (
-                <>
-                  <select
-                    value={member.role}
-                    onChange={(e) =>
-                      run(() =>
-                        unwrap(
-                          api.setMemberRole(workspace.workspace.id, member.address, e.target.value as WorkspaceRole),
-                        ),
-                      )
-                    }
-                  >
-                    <option value="guest">guest</option>
-                    <option value="member">member</option>
-                    <option value="admin">admin</option>
-                    {workspace.me.role === 'owner' ? <option value="owner">owner</option> : null}
-                  </select>
-                  <ConfirmButton
-                    label="Remove"
-                    confirmLabel="Confirm"
-                    onConfirm={() => run(() => unwrap(api.removeMember(workspace.workspace.id, member.address)))}
-                  />
-                </>
-              ) : null}
-            </div>
-          </div>
-        ))}
-      </div>
-      {error ? <div className="error-text">{error}</div> : null}
-    </Modal>
-  );
-}
-
-export function WorkspaceProfileDialog({
-  workspace,
-  onClose,
-}: {
-  workspace: WorkspaceView;
-  onClose: () => void;
-}) {
-  const [displayName, setDisplayName] = useState(workspace.me.displayName);
-  const [title, setTitle] = useState(workspace.me.title);
-  const [error, run, busy] = useAction();
-
-  return (
-    <Modal
-      title={`How you appear in ${workspace.workspace.name}`}
-      subtitle="Each workspace can see you differently. This does not change your agent address."
-      onClose={onClose}
-    >
-      <Field label="Display name">
-        <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} autoFocus />
-      </Field>
-      <Field label="Title">
-        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Staff Engineer" />
-      </Field>
-      <p className="hint">
-        Your address stays <code>{workspace.me.address}</code>.
-      </p>
-      <button
-        className="primary"
-        disabled={busy}
-        onClick={async () => {
-          const ok = await run(() =>
-            unwrap(api.setWorkspaceProfile(workspace.workspace.id, { displayName, title })),
-          );
-          if (ok) onClose();
-        }}
-      >
-        {busy ? 'Saving…' : 'Save'}
-      </button>
       {error ? <div className="error-text">{error}</div> : null}
     </Modal>
   );
@@ -1004,13 +759,15 @@ export function StatusDialog({ state, onClose }: { state: AppState; onClose: () 
   );
 }
 
-const SHORTCUTS: { keys: string; what: string }[] = [
+export const SHORTCUTS: { keys: string; what: string }[] = [
   { keys: '⌘K', what: 'Jump to a channel, person or workspace' },
   { keys: '⌘F', what: 'Search this workspace' },
   { keys: '⌘1 … ⌘9', what: 'Switch workspace' },
   { keys: '⌥⇧↑ / ⌥⇧↓', what: 'Previous / next unread channel' },
   { keys: '⌘⇧A', what: 'Activity' },
   { keys: '⌘⇧T', what: 'Threads' },
+  { keys: '⌘⇧D', what: 'Your agent' },
+  { keys: '⌘,', what: 'Settings' },
   { keys: '⌘N', what: 'New message' },
   { keys: 'Enter', what: 'Send' },
   { keys: 'Shift+Enter', what: 'New line' },

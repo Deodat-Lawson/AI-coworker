@@ -12,33 +12,24 @@ import {
   ChannelDetailsDialog,
   CreateChannelDialog,
   InviteDialog,
-  MembersDialog,
   NewDirectMessageDialog,
   ProfileCard,
   ShortcutsDialog,
   StatusDialog,
-  WorkspaceProfileDialog,
-  WorkspaceSettingsDialog,
 } from './components/dialogs.js';
 import { api, emptyState, type AppState } from './lib/api.js';
 import Activity from './views/Activity.js';
-import AgentChat from './views/AgentChat.js';
+import Agent from './views/Agent.js';
+import Agents from './views/Agents.js';
 import Chat from './views/Chat.js';
 import Knowledge from './views/Knowledge.js';
-import MeetingView from './views/MeetingView.js';
-import People from './views/People.js';
 import SearchPanel from './views/SearchPanel.js';
-import Settings from './views/Settings.js';
-import Sources from './views/Sources.js';
-import Today from './views/Today.js';
+import Settings, { type SettingsPane } from './views/Settings.js';
 
 type Dialog =
   | { kind: 'none' }
   | { kind: 'add-workspace' }
-  | { kind: 'workspace-settings' }
   | { kind: 'invite' }
-  | { kind: 'members' }
-  | { kind: 'workspace-profile' }
   | { kind: 'create-channel' }
   | { kind: 'browse-channels' }
   | { kind: 'channel-details'; channelId: string }
@@ -51,6 +42,7 @@ export default function App() {
   const [state, setState] = useState<AppState>(emptyState);
   const [section, setSection] = useState<Section>('chat');
   const [openMeetingId, setOpenMeetingId] = useState<string | null>(null);
+  const [settingsPane, setSettingsPane] = useState<SettingsPane>('account');
   const [loaded, setLoaded] = useState(false);
   const [dialog, setDialog] = useState<Dialog>({ kind: 'none' });
   const [switcher, setSwitcher] = useState(false);
@@ -82,23 +74,55 @@ export default function App() {
     [state.workspaces, state.activeWorkspaceId],
   );
 
-  // A meeting that goes live is the one thing that should pull focus.
-  const liveId = state.live[0]?.meeting.id ?? null;
-  useEffect(() => {
-    if (liveId) {
-      setOpenMeetingId(liveId);
-      setSection('meetings');
-    }
-  }, [liveId]);
-
   const openChannel = useCallback(
     (workspaceId: string, channelId: string) => {
       void api.openChannel(workspaceId, channelId);
       setSection('chat');
       setSearching(false);
+      // A briefing belongs to the channel its meeting happened in; walking away
+      // from that channel should not leave it hanging beside a different one.
+      setOpenMeetingId(null);
     },
     [],
   );
+
+  /**
+   * Go to a meeting. A meeting is not a place of its own — it is a thread in a
+   * channel — so this opens that channel and puts the briefing beside it.
+   */
+  const openMeeting = useCallback(
+    (meetingId: string | null) => {
+      setOpenMeetingId(meetingId);
+      if (!meetingId) return;
+      const meeting =
+        state.live.find((l) => l.meeting.id === meetingId)?.meeting ??
+        state.meetings.find((m) => m.meeting.id === meetingId)?.meeting;
+      if (!meeting) return;
+      setSearching(false);
+      setSection('chat');
+      if (meeting.channelId && meeting.channelId !== state.activeChannelId) {
+        void api.openChannel(meeting.workspaceId, meeting.channelId);
+      }
+    },
+    [state.live, state.meetings, state.activeChannelId],
+  );
+
+  /** Every route into settings lands in the same place, on the right pane. */
+  const openSettings = useCallback((pane: SettingsPane) => {
+    setSettingsPane(pane);
+    setSection('settings');
+    setSearching(false);
+  }, []);
+
+  // A meeting that goes live is the one thing that should pull focus: it opens
+  // the channel it is happening in.
+  const liveId = state.live[0]?.meeting.id ?? null;
+  useEffect(() => {
+    if (liveId) openMeeting(liveId);
+    // Deliberately keyed on the meeting alone — re-running as the transcript
+    // grows would drag the reader back every time an agent speaks.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveId]);
 
   const switchWorkspace = useCallback(
     (workspaceId: string) => {
@@ -110,6 +134,7 @@ export default function App() {
       void api.openChannel(workspaceId, first?.channel.id ?? '');
       setSection('chat');
       setSearching(false);
+      setOpenMeetingId(null);
     },
     [state.workspaces],
   );
@@ -195,6 +220,17 @@ export default function App() {
         setSection('threads');
         return;
       }
+      if (mod && e.shiftKey && e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        setSection('agent');
+        return;
+      }
+      // The vault owns ⌘, while you are in it — that is its own preferences.
+      if (mod && e.key === ',' && section !== 'knowledge') {
+        e.preventDefault();
+        setSection('settings');
+        return;
+      }
       // ⌘N is "new note" inside the vault, the way it is in Obsidian.
       if (mod && !e.shiftKey && e.key.toLowerCase() === 'n' && section !== 'knowledge') {
         e.preventDefault();
@@ -274,9 +310,9 @@ export default function App() {
               workspace={workspace}
               onClose={() => setWsMenu(false)}
               onInvite={() => setDialog({ kind: 'invite' })}
-              onMembers={() => setDialog({ kind: 'members' })}
-              onProfile={() => setDialog({ kind: 'workspace-profile' })}
-              onSettings={() => setDialog({ kind: 'workspace-settings' })}
+              onMembers={() => openSettings('members')}
+              onProfile={() => openSettings('account')}
+              onSettings={() => openSettings('workspace')}
               onLeave={() => void api.leaveWorkspace(workspace.workspace.id)}
               onAddWorkspace={() => setDialog({ kind: 'add-workspace' })}
             />
@@ -284,7 +320,9 @@ export default function App() {
         ) : null}
       </div>
 
-      <main className={section === 'knowledge' ? 'main is-full' : 'main'}>
+      <main
+        className={section === 'knowledge' || section === 'settings' ? 'main is-full' : 'main'}
+      >
         {searching && workspace ? (
           <SearchPanel
             state={state}
@@ -303,7 +341,26 @@ export default function App() {
             onOpenChannel={(channelId) => openChannel(workspace.workspace.id, channelId)}
             onOpenMember={(address) => setDialog({ kind: 'profile', address })}
             onChannelDetails={() => setDialog({ kind: 'channel-details', channelId: state.activeChannelId })}
-            onBookMeeting={() => setSection('people')}
+            openMeetingId={openMeetingId}
+            onOpenMeeting={openMeeting}
+          />
+        ) : section === 'agent' ? (
+          <Agent state={state} onOpenMeeting={openMeeting} />
+        ) : section === 'settings' ? (
+          <Settings
+            state={state}
+            workspace={workspace}
+            pane={settingsPane}
+            onPane={setSettingsPane}
+            onOpenChannel={(channelId) =>
+              workspace && openChannel(workspace.workspace.id, channelId)
+            }
+            onMessage={(address) => {
+              if (!workspace) return;
+              setPendingDm(address);
+              void messagePerson(workspace.workspace.id, address);
+            }}
+            onOpenKnowledge={() => setSection('knowledge')}
           />
         ) : section === 'chat' ? (
           <div className="panel">
@@ -328,23 +385,18 @@ export default function App() {
           />
         ) : (
           <div className="panel scroll">
-            {section === 'today' && (
-              <Today
+            {section === 'agents' && (
+              <Agents
                 state={state}
-                onOpenMeeting={(id) => {
-                  setOpenMeetingId(id);
-                  setSection('meetings');
+                onOpenConversation={(address) => {
+                  if (!workspace) return;
+                  setPendingDm(address);
+                  void messagePerson(workspace.workspace.id, address);
                 }}
-                onView={(key) => setSection(key as Section)}
+                onOpenProfile={(address) => setDialog({ kind: 'profile', address })}
+                onInvite={() => setDialog({ kind: 'invite' })}
               />
             )}
-            {section === 'meetings' && (
-              <MeetingView state={state} openMeetingId={openMeetingId} onOpenMeeting={setOpenMeetingId} />
-            )}
-            {section === 'sources' && <Sources state={state} />}
-            {section === 'people' && <People state={state} />}
-            {section === 'agent' && <AgentChat state={state} />}
-            {section === 'settings' && <Settings state={state} />}
           </div>
         )}
       </main>
@@ -367,24 +419,8 @@ export default function App() {
       ) : null}
       {dialog.kind === 'status' ? <StatusDialog state={state} onClose={closeDialog} /> : null}
       {dialog.kind === 'shortcuts' ? <ShortcutsDialog onClose={closeDialog} /> : null}
-      {workspace && dialog.kind === 'workspace-settings' ? (
-        <WorkspaceSettingsDialog workspace={workspace} onClose={closeDialog} />
-      ) : null}
       {workspace && dialog.kind === 'invite' ? (
         <InviteDialog workspace={workspace} onClose={closeDialog} />
-      ) : null}
-      {workspace && dialog.kind === 'members' ? (
-        <MembersDialog
-          workspace={workspace}
-          onClose={closeDialog}
-          onMessage={(address) => {
-            setPendingDm(address);
-            void messagePerson(workspace.workspace.id, address);
-          }}
-        />
-      ) : null}
-      {workspace && dialog.kind === 'workspace-profile' ? (
-        <WorkspaceProfileDialog workspace={workspace} onClose={closeDialog} />
       ) : null}
       {workspace && dialog.kind === 'create-channel' ? (
         <CreateChannelDialog

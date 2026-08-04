@@ -49,6 +49,12 @@ export interface RoomOptions {
   maxTurnMs?: number;
   /** How long to wait for agents to join before starting without them. */
   joinTimeoutMs?: number;
+  /**
+   * Called for every line the room records, in order. The relay uses this to
+   * mirror the meeting into the channel it belongs to, so a meeting room and a
+   * channel thread are the same thing seen from two sides.
+   */
+  onEntry?: (entry: TranscriptEntry) => void;
   log?: (message: string) => void;
 }
 
@@ -71,6 +77,7 @@ export class MeetingRoom {
 
   private send: RoomOptions['send'];
   private onEnded: RoomOptions['onEnded'];
+  private onEntry: (entry: TranscriptEntry) => void;
   private turnTimeoutMs: number;
   private joinTimeoutMs: number;
   private log: (message: string) => void;
@@ -93,6 +100,7 @@ export class MeetingRoom {
     this.meeting = options.meeting;
     this.send = options.send;
     this.onEnded = options.onEnded;
+    this.onEntry = options.onEntry ?? (() => {});
     this.turnTimeoutMs = options.turnTimeoutMs ?? 90_000;
     this.maxTurnMs = options.maxTurnMs ?? Math.max(this.turnTimeoutMs * 4, 600_000);
     this.joinTimeoutMs = options.joinTimeoutMs ?? 20_000;
@@ -403,6 +411,13 @@ export class MeetingRoom {
     const full: TranscriptEntry = { id: id('tr'), ts: Date.now(), phase: this.phase, ...entry };
     this.transcript.push(full);
     this.broadcast({ type: 'room.event', meetingId: this.id, entry: full });
+    // Mirroring must never take the room down with it: a channel that has been
+    // archived or deleted mid-meeting is not the meeting's problem.
+    try {
+      this.onEntry(full);
+    } catch {
+      /* the transcript is the source of truth; the channel copy is a courtesy */
+    }
     return full;
   }
 

@@ -5,16 +5,18 @@ import { isDirect, statusIsLive } from '@ai-coworker/shared';
 import type { AppState, ChannelView, WorkspaceView } from '../lib/api.js';
 import { Avatar, Popover } from './ui.js';
 
+/**
+ * The places you can be in this app. There are only six, and four of them are
+ * conversations — that is the whole point. Meetings are not on this list
+ * because a meeting is not a place: it happens in a channel, in a thread.
+ */
 export type Section =
   | 'chat'
   | 'activity'
   | 'threads'
-  | 'today'
-  | 'meetings'
-  | 'knowledge'
-  | 'sources'
-  | 'people'
   | 'agent'
+  | 'agents'
+  | 'knowledge'
   | 'settings';
 
 interface Props {
@@ -74,6 +76,10 @@ export default function ChannelSidebar({
   const threadCount = new Set(
     state.activity.filter((a) => a.kind === 'thread_reply').map((a) => a.message.threadRootId),
   ).size;
+  // Channels with a room running in them right now, so the sidebar can say so.
+  const liveChannels = new Set(
+    state.live.map((room) => room.meeting.channelId).filter((id): id is string => Boolean(id)),
+  );
 
   return (
     <aside className="sidebar">
@@ -132,6 +138,13 @@ export default function ChannelSidebar({
           count={threadCount}
           onClick={() => onSection('threads')}
         />
+        <SideItem
+          label="Your agent"
+          icon="◆"
+          active={section === 'agent'}
+          onClick={() => onSection('agent')}
+          accent={state.live.length > 0 ? 'live' : undefined}
+        />
       </div>
 
       <div className="side-scroll">
@@ -146,6 +159,7 @@ export default function ChannelSidebar({
                 key={c.channel.id}
                 view={c}
                 active={section === 'chat' && c.channel.id === state.activeChannelId}
+                live={liveChannels.has(c.channel.id)}
                 onClick={() => onOpenChannel(c.channel.id)}
               />
             ))}
@@ -163,6 +177,7 @@ export default function ChannelSidebar({
               key={c.channel.id}
               view={c}
               active={section === 'chat' && c.channel.id === state.activeChannelId}
+              live={liveChannels.has(c.channel.id)}
               onClick={() => onOpenChannel(c.channel.id)}
             />
           ))}
@@ -183,6 +198,7 @@ export default function ChannelSidebar({
               key={c.channel.id}
               view={c}
               active={section === 'chat' && c.channel.id === state.activeChannelId}
+              live={liveChannels.has(c.channel.id)}
               onClick={() => onOpenChannel(c.channel.id)}
               dm
             />
@@ -194,21 +210,28 @@ export default function ChannelSidebar({
             </button>
           ) : null}
         </Group>
+      </div>
 
-        <Group title="Your agent" collapsed={collapsed.apps} onToggle={() => toggle('apps')}>
-          <AppRow label="Today" active={section === 'today'} onClick={() => onSection('today')} />
-          <AppRow
-            label="Meetings"
-            active={section === 'meetings'}
-            onClick={() => onSection('meetings')}
-            accent={state.live.length > 0 ? 'live' : undefined}
-          />
-          <AppRow label="Knowledge" active={section === 'knowledge'} onClick={() => onSection('knowledge')} />
-          <AppRow label="Sources" active={section === 'sources'} onClick={() => onSection('sources')} />
-          <AppRow label="People" active={section === 'people'} onClick={() => onSection('people')} />
-          <AppRow label="Ask your agent" active={section === 'agent'} onClick={() => onSection('agent')} />
-          <AppRow label="Settings" active={section === 'settings'} onClick={() => onSection('settings')} />
-        </Group>
+      <div className="side-foot">
+        <SideItem
+          label="Agents"
+          icon="◇"
+          active={section === 'agents'}
+          onClick={() => onSection('agents')}
+        />
+        <SideItem
+          label="Knowledge"
+          icon="▤"
+          active={section === 'knowledge'}
+          onClick={() => onSection('knowledge')}
+        />
+        <SideItem
+          label="Settings"
+          icon="⚙"
+          active={section === 'settings'}
+          onClick={() => onSection('settings')}
+          hint="⌘,"
+        />
       </div>
     </aside>
   );
@@ -251,6 +274,7 @@ function SideItem({
   active,
   count,
   hint,
+  accent,
   onClick,
 }: {
   label: string;
@@ -258,34 +282,16 @@ function SideItem({
   active?: boolean;
   count?: number;
   hint?: string;
+  accent?: string;
   onClick: () => void;
 }) {
   return (
     <button className={`side-row ${active ? 'active' : ''}`} onClick={onClick}>
       <span className="side-icon">{icon}</span>
       <span className="side-label">{label}</span>
-      {count ? <span className="side-badge">{count > 99 ? '99+' : count}</span> : null}
-      {hint && !count ? <span className="side-hint">{hint}</span> : null}
-    </button>
-  );
-}
-
-function AppRow({
-  label,
-  active,
-  accent,
-  onClick,
-}: {
-  label: string;
-  active?: boolean;
-  accent?: string;
-  onClick: () => void;
-}) {
-  return (
-    <button className={`side-row ${active ? 'active' : ''}`} onClick={onClick}>
-      <span className="side-icon dim">◆</span>
-      <span className="side-label">{label}</span>
       {accent ? <span className="side-badge live">{accent}</span> : null}
+      {count && !accent ? <span className="side-badge">{count > 99 ? '99+' : count}</span> : null}
+      {hint && !count && !accent ? <span className="side-hint">{hint}</span> : null}
     </button>
   );
 }
@@ -294,11 +300,14 @@ function ChannelRow({
   view,
   active,
   dm,
+  live,
   onClick,
 }: {
   view: ChannelView;
   active: boolean;
   dm?: boolean;
+  /** A meeting is running in this channel right now. */
+  live?: boolean;
   onClick: () => void;
 }) {
   const unread = view.read.unread > 0 && !active;
@@ -307,7 +316,7 @@ function ChannelRow({
     <button
       className={`side-row ${active ? 'active' : ''} ${unread && !muted ? 'unread' : ''} ${muted ? 'muted' : ''}`}
       onClick={onClick}
-      title={view.channel.topic || view.label}
+      title={live ? 'A meeting is happening in here' : view.channel.topic || view.label}
     >
       <span className="side-icon">
         {dm ? (
@@ -319,7 +328,9 @@ function ChannelRow({
         )}
       </span>
       <span className="side-label">{dm ? view.label : view.channel.name}</span>
-      {view.read.mentions > 0 ? (
+      {live ? (
+        <span className="side-badge live">live</span>
+      ) : view.read.mentions > 0 ? (
         <span className="side-badge mention">{view.read.mentions > 99 ? '99+' : view.read.mentions}</span>
       ) : unread && muted ? (
         <span className="side-badge">{view.read.unread}</span>

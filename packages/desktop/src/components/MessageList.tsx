@@ -18,6 +18,18 @@ export interface MessageListActions {
   onOpenChannel?: (channelId: string) => void;
   onOpenMember?: (address: string) => void;
   onLoadOlder?: () => void;
+  /** Open the briefing panel for a meeting that happened in this channel. */
+  onOpenMeeting?: (meetingId: string) => void;
+}
+
+/** What the channel knows about a meeting whose thread it is holding. */
+export interface MeetingLens {
+  live: boolean;
+  scheduled: boolean;
+  /** Substantive turns on the record, moderator lines excluded. */
+  turns: number;
+  participants: string[];
+  hasBriefing: boolean;
 }
 
 interface Props {
@@ -32,6 +44,8 @@ interface Props {
   /** Replies live in the thread panel, which renders without the thread affordance. */
   inThread?: boolean;
   emptyState?: React.ReactNode;
+  /** Meeting id → what the app knows about it, for the meeting rows. */
+  meetings?: Map<string, MeetingLens>;
 }
 
 export default function MessageList({
@@ -44,6 +58,7 @@ export default function MessageList({
   historyComplete,
   inThread,
   emptyState,
+  meetings,
 }: Props) {
   const scroller = useRef<HTMLDivElement>(null);
   const [pinnedToBottom, setPinnedToBottom] = useState(true);
@@ -116,6 +131,7 @@ export default function MessageList({
         onEditing={(on) => setEditing(on ? message.id : null)}
         inThread={inThread}
         members={members}
+        meeting={message.meetingId ? meetings?.get(message.meetingId) : undefined}
       />,
     );
     previous = message;
@@ -159,6 +175,7 @@ function MessageRow({
   editing,
   onEditing,
   inThread,
+  meeting,
 }: {
   message: Message;
   author?: WorkspaceMember;
@@ -170,6 +187,7 @@ function MessageRow({
   editing: boolean;
   onEditing: (on: boolean) => void;
   inThread?: boolean;
+  meeting?: MeetingLens;
 }) {
   const [picker, setPicker] = useState(false);
   const [menu, setMenu] = useState(false);
@@ -179,17 +197,28 @@ function MessageRow({
 
   const name = author?.displayName ?? message.author.split('@')[0]!;
 
-  if (message.kind === 'system' || message.kind === 'meeting') {
+  if (message.kind === 'meeting') {
+    // A meeting is a thread: one row in the channel, and the room itself inside
+    // it. The root carries the meeting; everything under it is a turn.
+    return message.threadRootId ? (
+      <MeetingTurn message={message} name={name} ctx={ctx} />
+    ) : (
+      <MeetingRow
+        message={message}
+        members={members}
+        me={me}
+        ctx={ctx}
+        actions={actions}
+        meeting={meeting}
+      />
+    );
+  }
+
+  if (message.kind === 'system') {
     return (
-      <div className={`msg system ${message.kind}`}>
-        <span className="system-dot">{message.kind === 'meeting' ? '◷' : '·'}</span>
-        <span className="system-text">
-          {message.kind === 'meeting' ? (
-            <RichText text={message.text} ctx={ctx} />
-          ) : (
-            systemPhrase(message, name, members)
-          )}
-        </span>
+      <div className="msg system">
+        <span className="system-dot">·</span>
+        <span className="system-text">{systemPhrase(message, name, members)}</span>
         <span className="msg-time">{timeOf(message.ts)}</span>
       </div>
     );
@@ -399,6 +428,110 @@ function MessageRow({
           ) : null}
         </div>
       )}
+    </div>
+  );
+}
+
+/** How a turn is labelled in the room. Moderator lines get no label at all. */
+const TURN_LABEL: Record<string, string> = {
+  utterance: 'update',
+  question: 'asked',
+  answer: 'answered',
+  demo: 'showed',
+  assignment: 'assigned',
+  commitment: 'committed',
+  decision: 'decided',
+  minutes: 'minutes',
+};
+
+/**
+ * The meeting itself, as one row in the channel timeline. Opening it opens the
+ * room — which is to say, the thread underneath this message.
+ */
+function MeetingRow({
+  message,
+  members,
+  me,
+  ctx,
+  actions,
+  meeting,
+}: {
+  message: Message;
+  members: WorkspaceMember[];
+  me: string;
+  ctx: MentionContext;
+  actions: MessageListActions;
+  meeting?: MeetingLens;
+}) {
+  const who = (address: string) =>
+    address === me ? 'you' : members.find((m) => m.address === address)?.displayName ?? address.split('@')[0]!;
+  const turns = meeting?.turns ?? Math.max(0, message.replyCount);
+
+  return (
+    <div className={`msg meeting-row ${meeting?.live ? 'is-live' : ''}`}>
+      <div className="msg-gutter">
+        <span className="meeting-glyph">◷</span>
+      </div>
+      <div className="msg-body">
+        <div className="msg-head">
+          <span className="msg-author">Agent meeting</span>
+          {meeting?.live ? <span className="side-badge live">live</span> : null}
+          {meeting?.scheduled && !meeting.live ? <span className="tag accent small">booked</span> : null}
+          <span className="msg-time">{timeOf(message.ts)}</span>
+        </div>
+
+        <RichText text={message.text} ctx={ctx} />
+
+        {meeting?.participants.length ? (
+          <div className="meeting-who">{meeting.participants.map(who).join(', ')}</div>
+        ) : null}
+
+        <div className="meeting-actions">
+          {message.replyCount > 0 ? (
+            <button className="ghost" onClick={() => actions.onOpenThread(message.id)}>
+              {meeting?.live ? 'Watch the room' : 'Open the room'}
+              <span className="thread-when">{plural(turns, 'turn', 'turns')}</span>
+            </button>
+          ) : null}
+          {message.meetingId ? (
+            <button className="ghost" onClick={() => actions.onOpenMeeting?.(message.meetingId!)}>
+              {meeting?.hasBriefing ? 'Your briefing' : 'Details'}
+            </button>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** One line of the room, rendered inside the meeting's thread. */
+function MeetingTurn({ message, name, ctx }: { message: Message; name: string; ctx: MentionContext }) {
+  const kind = message.systemDetail ?? '';
+
+  // The room's own lines — phase changes, "Dana is not present to answer" — are
+  // scaffolding, not speech.
+  if (message.author === 'moderator' || kind === 'moderator' || message.systemEvent) {
+    return (
+      <div className="turn-divider">
+        <span>{message.text}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`msg turn-msg ${kind}`}>
+      <div className="msg-gutter">
+        <Avatar name={name} address={message.author} size={28} />
+      </div>
+      <div className="msg-body">
+        <div className="msg-head">
+          <span className="msg-author">{name}</span>
+          {TURN_LABEL[kind] ? <span className="turn-kind">{TURN_LABEL[kind]}</span> : null}
+          <span className="msg-time">{timeOf(message.ts)}</span>
+        </div>
+        <RichText text={message.text} ctx={ctx} />
+        {message.refs?.length ? <ArtifactChips refs={message.refs} /> : null}
+      </div>
     </div>
   );
 }

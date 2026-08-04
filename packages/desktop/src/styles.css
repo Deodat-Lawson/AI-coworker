@@ -1331,8 +1331,7 @@ h2:first-of-type {
   margin-top: 6px;
 }
 
-.msg.system,
-.msg.meeting {
+.msg.system {
   grid-template-columns: 60px 1fr auto;
   align-items: baseline;
   color: var(--text-faint);
@@ -1340,16 +1339,9 @@ h2:first-of-type {
   padding-top: 2px;
   padding-bottom: 2px;
 }
-.msg.system .system-dot,
-.msg.meeting .system-dot {
+.msg.system .system-dot {
   text-align: right;
   padding-right: 10px;
-}
-.msg.meeting {
-  color: var(--text-dim);
-}
-.msg.meeting .system-text .rich-p {
-  margin: 0;
 }
 
 /* rich text */
@@ -2380,4 +2372,244 @@ kbd {
   width: 18px;
   height: 18px;
   overflow: visible;
+}
+
+/* --- the sidebar foot ----------------------------------------------------- */
+
+/* Agents, Knowledge and Settings sit below the conversations and never scroll
+   away from them — they are the three things that are not a conversation. */
+.side-foot {
+  flex-shrink: 0;
+  padding: 6px 8px 10px;
+  border-top: 1px solid var(--border);
+}
+
+/* --- meetings in a channel ------------------------------------------------ */
+
+/* A meeting is one row in the timeline. It reads as an event, not as somebody
+   talking, so it gets a rule down its left edge rather than an avatar. */
+.msg.meeting-row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  margin: 4px 0;
+  box-shadow: inset 3px 0 0 var(--border);
+}
+.msg.meeting-row.is-live {
+  box-shadow: inset 3px 0 0 var(--good);
+  background: rgba(74, 222, 128, 0.045);
+}
+.meeting-glyph {
+  display: block;
+  text-align: right;
+  padding-right: 10px;
+  font-size: 15px;
+  color: var(--text-faint);
+}
+.msg.meeting-row.is-live .meeting-glyph {
+  color: var(--good);
+}
+.meeting-who {
+  font-size: 12.5px;
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+.meeting-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 7px;
+}
+.meeting-actions .ghost {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+}
+
+/* A live room, announced at the top of the channel it is running in. */
+.live-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(74, 222, 128, 0.07);
+  flex-shrink: 0;
+}
+.live-title {
+  font-weight: 600;
+  font-size: 13.5px;
+  white-space: nowrap;
+}
+.live-sub {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* --- turns inside a meeting's thread -------------------------------------- */
+
+.msg.turn-msg {
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+.msg.turn-msg.assignment,
+.msg.turn-msg.commitment,
+.msg.turn-msg.decision {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.msg.turn-msg.minutes {
+  box-shadow: inset 2px 0 0 var(--good);
+}
+.turn-kind {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+/* The room's own lines: scaffolding, so they read as a rule with a label. */
+.turn-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 20px 8px 0;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.turn-divider::before,
+.turn-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.turn-divider span {
+  flex: 0 0 auto;
+}
+
+/* --- picking who a meeting is with ---------------------------------------- */
+
+.member-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.member-pick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px 4px 5px;
+  border-radius: 999px;
+  font-size: 13px;
+  opacity: 0.55;
+}
+.member-pick.on {
+  opacity: 1;
+  border-color: var(--accent);
+  background: rgba(110, 168, 254, 0.1);
+}
+
+/* --- unified settings ----------------------------------------------------- */
+
+/* One screen, one list of panes. There is no second place to look. */
+.settings {
+  display: flex;
+  height: 100%;
+  min-width: 0;
+}
+.settings-rail {
+  width: 216px;
+  flex-shrink: 0;
+  padding: 40px 10px 20px;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  background: var(--sidebar);
+}
+.settings-rail-title {
+  font-size: 15px;
+  font-weight: 700;
+  padding: 0 8px 10px;
+}
+.settings-rail-group + .settings-rail-group {
+  margin-top: 14px;
+}
+.settings-rail-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  padding: 0 8px 4px;
+}
+.settings-rail-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 14px;
+}
+.settings-rail-item:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: transparent;
+  color: var(--text);
+}
+.settings-rail-item.active {
+  background: var(--active);
+  color: var(--text);
+}
+.settings-pane {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 34px 32px 60px;
+}
+.settings-pane > * {
+  max-width: 760px;
+}
+
+/* --- panels that carry a page inside them --------------------------------- */
+
+/* The briefing beside a channel, and the agent's ledger, are pages in a 400px
+   column: the page padding has to come down or nothing fits. */
+.thread-panel .panel {
+  padding: 18px 18px 40px;
+  /* The header above it is fixed; this takes the rest and scrolls inside it.
+     `min-height: 0` is what lets a flex child actually shrink to fit. */
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+.thread-panel .panel > * {
+  max-width: none;
+}
+.thread-panel .panel h1 {
+  font-size: 18px;
+}
+.thread-panel .panel h2 {
+  font-size: 13px;
+}
+
+/* A title that is also a link — a member name, a channel name in a list. */
+.member-name.link,
+.card-title.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.member-name.link:hover:not(:disabled),
+.card-title.link:hover:not(:disabled) {
+  color: var(--accent);
+  background: none;
 }

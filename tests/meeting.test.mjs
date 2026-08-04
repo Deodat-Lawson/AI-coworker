@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { cleanup, once, startAgent, startRelay, waitForDirectory } from './helpers.mjs';
+import { cleanup, once, startAgent, startRelay, until, waitForDirectory } from './helpers.mjs';
 
 test('three agents schedule and run a meeting end to end', async (t) => {
   const relay = await startRelay();
@@ -168,4 +168,146 @@ test('a question in the room is answered in the room', async (t) => {
     // The answer must come after the question — this is a live exchange, not a mailbox.
     assert.ok(answer.ts >= question.ts);
   }
+});
+
+test('a meeting is a thread in the channel it belongs to', async (t) => {
+  const relay = await startRelay();
+  const dana = await startAgent('dana', relay.url);
+  const sarah = await startAgent('sarah', relay.url);
+  const all = [dana, sarah];
+
+  t.after(async () => {
+    for (const a of all) await a.agent.shutdown();
+    await relay.stop();
+    await cleanup(all.map((a) => a.dir));
+  });
+
+  await waitForDirectory(all.map((a) => a.agent), 2);
+  await until(() => dana.agent.workspaces.all[0] && sarah.agent.workspaces.all[0], 'snapshots');
+
+  const workspace = dana.agent.workspaces.all[0];
+  const general = [...workspace.channels.values()].find((c) => c.isDefault);
+  assert.ok(general, 'the home workspace should have a default channel');
+
+  const scheduled = once(dana.agent, 'meeting.scheduled');
+  dana.agent.requestMeeting({
+    participants: [sarah.persona.profile.address],
+    title: 'Refresh tokens',
+    purpose: 'Settle the refresh-token question.',
+    urgency: 'asap',
+    durationMins: 30,
+    workspaceId: workspace.workspace.id,
+    channelId: general.id,
+  });
+  const meeting = await scheduled;
+
+  // A meeting booked from a channel belongs to that channel — there is no
+  // separate place for it to happen.
+  assert.equal(meeting.channelId, general.id);
+
+  // Booking it put exactly one row in the channel, and that row is the meeting.
+  const timeline = () => dana.agent.workspaces.messages(workspace.workspace.id, general.id);
+  await until(() => timeline().some((m) => m.meetingId === meeting.id), 'the booking lands in the channel');
+  const roots = timeline().filter((m) => m.meetingId === meeting.id && !m.threadRootId);
+  assert.equal(roots.length, 1, 'a meeting is one row in the channel, not several');
+  const root = roots[0];
+  assert.equal(root.kind, 'meeting');
+  assert.equal(root.systemEvent, 'meeting_scheduled');
+
+  const ended = Promise.all(all.map((a) => once(a.agent, 'meeting.ended', () => true, 60_000)));
+  dana.agent.startMeetingNow(meeting.id);
+  await ended;
+
+  // Every turn the agents took is a reply under that row, on both machines.
+  for (const who of all) {
+    const state = who.agent.workspaces.all[0];
+    await until(
+      () => (who.agent.workspaces.thread(state.workspace.id, root.id) ?? []).length > 8,
+      `${who.persona.key} sees the room as a thread`,
+    );
+    const replies = who.agent.workspaces.thread(state.workspace.id, root.id);
+    for (const reply of replies) {
+      assert.equal(reply.kind, 'meeting');
+      assert.equal(reply.meetingId, meeting.id);
+      assert.equal(reply.threadRootId, root.id);
+    }
+    assert.ok(
+      replies.some((r) => r.systemDetail === 'assignment'),
+      'the assignments should be in the channel too',
+    );
+    assert.ok(
+      replies.some((r) => r.systemEvent === 'meeting_ended'),
+      'the meeting should close out in its own thread',
+    );
+
+    // The turns are replies, so a long meeting never reads as a hundred unread
+    // things: the channel timeline still holds one row for it.
+    const shown = who.agent.workspaces.messages(state.workspace.id, general.id);
+    assert.equal(
+      shown.filter((m) => m.meetingId === meeting.id).length,
+      1,
+      'the timeline keeps one row per meeting',
+    );
+
+    // The row has to advertise the room, which means its reply count has to
+    // reach the client — the "Open the room" affordance hangs off it.
+    const mine = shown.find((m) => m.id === root.id);
+    assert.ok(
+      mine.replyCount >= replies.length,
+      `the meeting row should count its turns, saw ${mine.replyCount} for ${replies.length} replies`,
+    );
+
+    // And a meeting must never light up the unread badge turn by turn.
+    const read = who.agent.workspaces.read(state.workspace.id, general.id);
+    assert.ok(read.unread <= 1, `a meeting should not read as ${read.unread} unread things`);
+  }
+});
+
+test('a meeting booked with no channel lands in the conversation those people share', async (t) => {
+  const relay = await startRelay();
+  const dana = await startAgent('dana', relay.url);
+  const sarah = await startAgent('sarah', relay.url);
+  const all = [dana, sarah];
+
+  t.after(async () => {
+    for (const a of all) await a.agent.shutdown();
+    await relay.stop();
+    await cleanup(all.map((a) => a.dir));
+  });
+
+  await waitForDirectory(all.map((a) => a.agent), 2);
+  await until(() => dana.agent.workspaces.all[0] && sarah.agent.workspaces.all[0], 'snapshots');
+  const workspace = dana.agent.workspaces.all[0];
+
+  const scheduled = once(dana.agent, 'meeting.scheduled');
+  dana.agent.requestMeeting({
+    participants: [sarah.persona.profile.address],
+    title: 'Quick one',
+    purpose: 'Sanity-check the rollout order.',
+    urgency: 'asap',
+    durationMins: 15,
+  });
+  const meeting = await scheduled;
+
+  // Nobody said where, so it goes where these two already talk to each other
+  // rather than into a room invented for the occasion.
+  assert.ok(meeting.channelId, 'a meeting always belongs to a channel');
+  await until(
+    () => dana.agent.workspaces.channel(workspace.workspace.id, meeting.channelId),
+    'the conversation to arrive',
+  );
+  const channel = dana.agent.workspaces.channel(workspace.workspace.id, meeting.channelId);
+  assert.equal(channel.kind, 'dm', 'two people share a direct conversation, so that is the room');
+  assert.deepEqual(
+    [...channel.members].sort(),
+    [dana.persona.profile.address, sarah.persona.profile.address].sort(),
+  );
+
+  await until(
+    () =>
+      dana.agent.workspaces
+        .messages(workspace.workspace.id, meeting.channelId)
+        .some((m) => m.meetingId === meeting.id),
+    'the booking to show up in that conversation',
+  );
 });

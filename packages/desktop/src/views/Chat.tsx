@@ -3,12 +3,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { isDirect } from '@ai-coworker/shared';
 
 import Composer from '../components/Composer.js';
-import MessageList, { type MessageListActions } from '../components/MessageList.js';
+import MessageList, { type MeetingLens, type MessageListActions } from '../components/MessageList.js';
 import type { MentionContext } from '../components/RichText.js';
 import RichText from '../components/RichText.js';
+import StartMeetingDialog from '../components/StartMeetingDialog.js';
 import { Avatar } from '../components/ui.js';
 import { api, unwrap, type AppState, type WorkspaceView } from '../lib/api.js';
-import { plural, timeOf } from '../lib/format.js';
+import { nameOf, plural, timeOf } from '../lib/format.js';
+import MeetingPanel from './MeetingPanel.js';
 
 interface Props {
   state: AppState;
@@ -16,21 +18,32 @@ interface Props {
   onOpenChannel: (channelId: string) => void;
   onOpenMember: (address: string) => void;
   onChannelDetails: () => void;
-  onBookMeeting: () => void;
+  /** The meeting whose briefing is open beside the channel, if any. */
+  openMeetingId: string | null;
+  onOpenMeeting: (meetingId: string | null) => void;
 }
 
-/** The channel view: header, messages, composer, and the thread panel beside it. */
+/**
+ * The channel view: header, messages, composer, and — beside them — either the
+ * thread panel or a meeting's briefing.
+ *
+ * A meeting is not somewhere else in this app. It is a thread in a channel: one
+ * row in the timeline, the agents' turns inside it, and the briefing your own
+ * agent wrote for you in the panel next to it.
+ */
 export default function Chat({
   state,
   workspace,
   onOpenChannel,
   onOpenMember,
   onChannelDetails,
-  onBookMeeting,
+  openMeetingId,
+  onOpenMeeting,
 }: Props) {
   const view = workspace.channels.find((c) => c.channel.id === state.activeChannelId);
   const [error, setError] = useState<string | null>(null);
   const [showPinned, setShowPinned] = useState(false);
+  const [booking, setBooking] = useState(false);
 
   useEffect(() => {
     if (!error) return;
@@ -48,6 +61,31 @@ export default function Chat({
     }),
     [workspace.members, workspace.channels, workspace.me.address, onOpenChannel, onOpenMember],
   );
+
+  // What the app knows about every meeting it can see, so a meeting row in the
+  // timeline can say whether it is live, booked, or already briefed.
+  const meetingLenses = useMemo(() => {
+    const map = new Map<string, MeetingLens>();
+    for (const record of state.meetings) {
+      map.set(record.meeting.id, {
+        live: false,
+        scheduled: record.meeting.status === 'scheduled',
+        turns: record.transcript.filter((t) => t.kind !== 'moderator').length,
+        participants: record.meeting.participants,
+        hasBriefing: Boolean(record.outcome),
+      });
+    }
+    for (const room of state.live) {
+      map.set(room.meeting.id, {
+        live: true,
+        scheduled: false,
+        turns: room.transcript.filter((t) => t.kind !== 'moderator').length,
+        participants: room.meeting.participants,
+        hasBriefing: false,
+      });
+    }
+    return map;
+  }, [state.meetings, state.live]);
 
   if (!view) {
     return (
@@ -69,6 +107,22 @@ export default function Chat({
     }
   };
 
+  /**
+   * Open the room for a meeting — which is to say, its thread. The root is the
+   * message the relay wrote into this channel when the meeting was booked.
+   */
+  const openRoom = (meetingId: string) => {
+    const root = state.messages.find((m) => m.meetingId === meetingId && !m.threadRootId);
+    if (root) {
+      onOpenMeeting(null);
+      void guard(() => unwrap(api.openThread(workspace.workspace.id, channel.id, root.id)));
+    } else {
+      // Its row has scrolled out of the loaded history; the briefing still has
+      // everything your agent kept.
+      onOpenMeeting(meetingId);
+    }
+  };
+
   const actions: MessageListActions = {
     onReact: (messageId, emoji, on) =>
       void guard(() => unwrap(api.react(workspace.workspace.id, messageId, emoji, on))),
@@ -82,16 +136,22 @@ export default function Chat({
     onOpenChannel,
     onOpenMember,
     onLoadOlder: () => void api.loadOlder(),
+    onOpenMeeting,
   };
 
+  // Rooms running in this channel right now. The banner is how you find out a
+  // meeting started without your agent having to interrupt you.
+  const liveHere = state.live.filter((room) => room.meeting.channelId === channel.id);
   const pinned = state.messages.filter((m) => channel.pinned.includes(m.id));
   // Browsing a public channel you have not joined: read freely, but say so
   // rather than pretending you are part of it.
   const previewing = !view.joined && !isDirect(channel) && !channel.archived;
   const others = channel.members.filter((a) => a !== workspace.me.address);
 
+  const sidePanel = openMeetingId ? 'meeting' : state.thread ? 'thread' : null;
+
   return (
-    <div className={`chat ${state.thread ? 'with-thread' : ''}`}>
+    <div className={`chat ${sidePanel ? 'with-thread' : ''}`}>
       <div className="chat-main">
         <header className="chat-head">
           <button className="chat-title" onClick={onChannelDetails}>
@@ -143,13 +203,35 @@ export default function Chat({
               </span>
               {channel.members.length}
             </button>
-            {isDirect(channel) || channel.archived ? null : (
-              <button className="ghost" onClick={onBookMeeting} title="Have your agents meet about this">
+            {channel.archived || !view.joined ? null : (
+              <button
+                className="ghost"
+                onClick={() => setBooking(true)}
+                title="Have the agents in this channel meet, here"
+              >
                 ◷ Meet
               </button>
             )}
           </div>
         </header>
+
+        {liveHere.map((room) => (
+          <div className="live-bar" key={room.meeting.id}>
+            <span className="side-badge live">live</span>
+            <span className="live-title">{room.meeting.title}</span>
+            <span className="live-sub">
+              {room.phase}
+              {room.speaking ? ` · ${nameOf(room.speaking, state.directory)} has the floor` : ''}
+              {room.thinking ? ' · your agent is composing a turn' : ''}
+            </span>
+            <button className="ghost" onClick={() => onOpenMeeting(room.meeting.id)}>
+              Briefing
+            </button>
+            <button className="primary" onClick={() => openRoom(room.meeting.id)}>
+              Watch the room
+            </button>
+          </div>
+        ))}
 
         {showPinned && pinned.length ? (
           <div className="pinned-bar">
@@ -174,6 +256,7 @@ export default function Chat({
           actions={actions}
           lastReadTs={state.unreadFrom}
           historyComplete={state.historyComplete}
+          meetings={meetingLenses}
           emptyState={<ChannelIntro view={view} workspace={workspace} />}
         />
 
@@ -231,8 +314,26 @@ export default function Chat({
         </div>
       </div>
 
-      {state.thread ? (
-        <ThreadPanel state={state} workspace={workspace} ctx={ctx} actions={actions} onError={setError} />
+      {sidePanel === 'meeting' && openMeetingId ? (
+        <MeetingPanel
+          state={state}
+          meetingId={openMeetingId}
+          onClose={() => onOpenMeeting(null)}
+          onWatch={() => openRoom(openMeetingId)}
+        />
+      ) : sidePanel === 'thread' ? (
+        <ThreadPanel
+          state={state}
+          workspace={workspace}
+          ctx={ctx}
+          actions={actions}
+          meetings={meetingLenses}
+          onError={setError}
+        />
+      ) : null}
+
+      {booking ? (
+        <StartMeetingDialog workspace={workspace} view={view} onClose={() => setBooking(false)} />
       ) : null}
     </div>
   );
@@ -271,26 +372,38 @@ function ThreadPanel({
   workspace,
   ctx,
   actions,
+  meetings,
   onError,
 }: {
   state: AppState;
   workspace: WorkspaceView;
   ctx: MentionContext;
   actions: MessageListActions;
+  meetings: Map<string, MeetingLens>;
   onError: (message: string) => void;
 }) {
   const thread = state.thread!;
   const [alsoSend, setAlsoSend] = useState(false);
   const channel = workspace.channels.find((c) => c.channel.id === thread.channelId);
   const label = channel ? (isDirect(channel.channel) ? channel.label : `#${channel.channel.name}`) : '';
+  // A meeting's thread is the meeting room. Say so, rather than calling the
+  // room "Thread".
+  const room = thread.root.meetingId ? meetings.get(thread.root.meetingId) : undefined;
+  const meetingId = thread.root.meetingId;
 
   return (
     <aside className="thread-panel">
       <header className="chat-head">
         <div className="chat-title">
-          Thread
+          {meetingId ? 'The room' : 'Thread'}
+          {room?.live ? <span className="side-badge live">live</span> : null}
           <span className="chat-topic">{label}</span>
         </div>
+        {meetingId ? (
+          <button className="ghost" onClick={() => actions.onOpenMeeting?.(meetingId)}>
+            {room?.hasBriefing ? 'Your briefing' : 'Details'}
+          </button>
+        ) : null}
         <button
           className="ghost"
           onClick={() => void api.openThread(workspace.workspace.id, thread.channelId, null)}
@@ -310,11 +423,12 @@ function ThreadPanel({
         lastReadTs={Number.MAX_SAFE_INTEGER}
         historyComplete
         inThread
+        meetings={meetings}
       />
 
       <div className="chat-foot">
         <Composer
-          placeholder="Reply…"
+          placeholder={meetingId ? 'Say something about this meeting…' : 'Reply…'}
           members={workspace.members}
           channels={workspace.channels.map((c) => c.channel)}
           me={workspace.me.address}
