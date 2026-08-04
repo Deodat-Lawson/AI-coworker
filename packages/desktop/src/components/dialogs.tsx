@@ -185,77 +185,6 @@ export function AddWorkspaceDialog({ state, onClose }: { state: AppState; onClos
   );
 }
 
-export function InviteDialog({ workspace, onClose }: { workspace: WorkspaceView; onClose: () => void }) {
-  const [address, setAddress] = useState('');
-  const [copied, setCopied] = useState('');
-  const [error, run, busy] = useAction();
-  const invites = workspace.invites;
-
-  return (
-    <Modal
-      title={`Invite people to ${workspace.workspace.name}`}
-      subtitle="Share a code. Whoever has it can join from their own app."
-      onClose={onClose}
-    >
-      <Field
-        label="Invite one person (optional)"
-        hint="Leave blank for a code anybody can use. With an address, only that agent can redeem it."
-      >
-        <div className="row">
-          <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="sarah@northwind" />
-          <button
-            style={{ flex: '0 0 auto' }}
-            className="primary"
-            disabled={busy}
-            onClick={() =>
-              run(() => unwrap(api.createInvite(workspace.workspace.id, { invitedAddress: address.trim() || undefined })))
-            }
-          >
-            {busy ? 'Creating…' : 'Create invite'}
-          </button>
-        </div>
-      </Field>
-
-      {invites.length === 0 ? (
-        <div className="empty">No live invitations.</div>
-      ) : (
-        invites.map((invite) => (
-          <div className="card" key={invite.code}>
-            <div className="card-head">
-              <div>
-                <div className="card-title mono">{invite.code}</div>
-                <div className="card-sub">
-                  {invite.invitedAddress ? `For ${invite.invitedAddress}` : 'Anyone with the code'} ·{' '}
-                  {invite.expiresAt ? `expires ${relative(invite.expiresAt)}` : 'no expiry'}
-                  {invite.maxUses ? ` · ${invite.uses}/${invite.maxUses} used` : ''}
-                </div>
-              </div>
-              <div className="row" style={{ flex: '0 0 auto', gap: 6 }}>
-                <button
-                  onClick={() => {
-                    void navigator.clipboard?.writeText(invite.code);
-                    setCopied(invite.code);
-                    setTimeout(() => setCopied(''), 1500);
-                  }}
-                >
-                  {copied === invite.code ? 'Copied' : 'Copy'}
-                </button>
-                <button
-                  className="danger"
-                  onClick={() => run(() => unwrap(api.revokeInvite(workspace.workspace.id, invite.code)))}
-                >
-                  Revoke
-                </button>
-              </div>
-            </div>
-          </div>
-        ))
-      )}
-      {error ? <div className="error-text">{error}</div> : null}
-    </Modal>
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Channels
 // ---------------------------------------------------------------------------
@@ -769,6 +698,7 @@ export const SHORTCUTS: { keys: string; what: string }[] = [
   { keys: '⌘⇧D', what: 'Your agent' },
   { keys: '⌘,', what: 'Settings' },
   { keys: '⌘N', what: 'New message' },
+  { keys: '⌘⇧L', what: 'Dark → light → match system' },
   { keys: 'Enter', what: 'Send' },
   { keys: 'Shift+Enter', what: 'New line' },
   { keys: '↑', what: 'Edit your last message' },

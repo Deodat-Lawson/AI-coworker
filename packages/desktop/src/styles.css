@@ -1,19 +1,178 @@
+/* =========================================================================
+   Theme
+   -------------------------------------------------------------------------
+   Every colour in this file comes from here. Nothing below sets a literal,
+   which is what makes a second theme a matter of overriding one block rather
+   than auditing two thousand lines — and it is enforced by a test.
+
+   `data-theme` is stamped on <html> by the renderer. "system" resolves to one
+   of the two before it lands, so the CSS only ever sees dark or light.
+   ========================================================================= */
+
 :root {
+  color-scheme: dark;
+
+  /* Surfaces, from the back of the screen forwards. */
   --bg: #0f1115;
+  --bg-sunken: #0b0d11;
   --bg-raised: #161920;
+  --bg-elevated: #1a1e26;
   --bg-input: #1c2029;
+  --bg-button: #1c2029;
+  --bg-button-hover: #232834;
+  --rail: #0a0c10;
+  --sidebar: #0c0e13;
+  --badge-bg: #2b3140;
+
+  /* Lines. --border-soft is the hairline used inside dense lists. */
   --border: #262b36;
   --border-strong: #333a48;
+  --border-stronger: #414a5c;
+  --border-soft: rgba(38, 43, 54, 0.5);
+
+  /* Type. --text-on-accent rides a filled accent button; --text-on-solid
+     rides a filled state colour (a mention badge, an avatar). */
   --text: #e6e9ef;
   --text-dim: #949bab;
-  --text-faint: #6b7280;
-  --accent: #6ea8fe;
+  --text-faint: #828a99;
+  --text-on-accent: #0b1220;
+  --text-on-solid: #ffffff;
+  --text-bad: #f4a8a8;
+
+  --theme-accent: #6ea8fe;
+  --accent: var(--theme-accent);
+  --accent-hover: #85b6ff;
   --accent-dim: #2b4a7d;
+  --accent-border: #3a5f9e;
+  --focus-border: #2b4a7d;
+  --accent-tint-soft: rgba(110, 168, 254, 0.04);
+  --accent-tint: rgba(110, 168, 254, 0.09);
+  --accent-tint-mid: rgba(110, 168, 254, 0.12);
+  --accent-tint-hi: rgba(110, 168, 254, 0.16);
+  --accent-tint-max: rgba(110, 168, 254, 0.3);
+
   --good: #4ade80;
+  --good-tint-soft: rgba(74, 222, 128, 0.05);
+  --good-tint: rgba(74, 222, 128, 0.16);
+  --good-border: rgba(74, 222, 128, 0.28);
+  --good-glow: rgba(74, 222, 128, 0.6);
+
   --warn: #fbbf24;
+  --warn-tint: rgba(251, 191, 36, 0.07);
+  --warn-tint-hi: rgba(251, 191, 36, 0.22);
+  --warn-border: rgba(251, 191, 36, 0.28);
+  --warn-border-strong: rgba(251, 191, 36, 0.35);
+
   --bad: #f87171;
+  --bad-tint: rgba(248, 113, 113, 0.07);
+  --bad-tint-mid: rgba(248, 113, 113, 0.14);
+  --bad-tint-hi: rgba(248, 113, 113, 0.18);
+  --bad-border: rgba(248, 113, 113, 0.3);
+  --bad-border-strong: rgba(248, 113, 113, 0.35);
+  --bad-rule: rgba(248, 113, 113, 0.45);
+
+  /* Washes laid over whatever is behind them. */
+  --hover: rgba(255, 255, 255, 0.045);
+  --hover-faint: rgba(255, 255, 255, 0.022);
+  --code-bg: rgba(255, 255, 255, 0.07);
+  --active: var(--accent-tint-hi);
+  --mention: #d92d20;
+  --mention-text: #f87171;
+  /* Highlighted text — `==like this==` in a note, and search matches. */
+  --mark: #7a6a2a;
+
+  --shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  --shadow-sm: 0 6px 18px rgba(0, 0, 0, 0.4);
+  --scrim: rgba(6, 8, 11, 0.66);
+
+  /* The avatar gradient is an identity colour, not a theme colour: it is the
+     same in both so a face stays recognisable when you flip the lights. */
+  --avatar-from: #3b6fd4;
+  --avatar-to: #7c4dff;
+
+  /* Constant on purpose: the appearance picker draws both themes side by side,
+     so these are the only colours that must not flip with the theme. They
+     mirror --bg and --rail from each block above, and a test says so. */
+  --preview-dark-bg: #0f1115;
+  --preview-dark-rail: #0a0c10;
+  --preview-light-bg: #ffffff;
+  --preview-light-rail: #e7e9ef;
+
   --radius: 10px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* Light is not dark inverted. The surfaces climb towards white as they come
+   forward, the accent darkens to hold contrast against them, and the state
+   colours move to their darker, more legible shades. */
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --bg: #ffffff;
+  --bg-sunken: #f1f3f6;
+  --bg-raised: #f7f8fa;
+  --bg-elevated: #eef0f5;
+  --bg-input: #ffffff;
+  --bg-button: #f4f5f8;
+  --bg-button-hover: #e7e9ef;
+  --rail: #e7e9ef;
+  --sidebar: #f3f4f8;
+  --badge-bg: #d5d9e2;
+
+  --border: #dcdfe6;
+  --border-strong: #c9cdd7;
+  --border-stronger: #aeb4c1;
+  --border-soft: rgba(23, 28, 38, 0.08);
+
+  --text: #17191d;
+  --text-dim: #556070;
+  --text-faint: #6b7484;
+  --text-on-accent: #ffffff;
+  --text-on-solid: #ffffff;
+  --text-bad: #b3261e;
+
+  --theme-accent: #1264a3;
+  --accent: var(--theme-accent);
+  --accent-hover: #0b4f83;
+  --accent-dim: #d3e5f6;
+  --accent-border: #a6cbec;
+  --focus-border: #1264a3;
+  --accent-tint-soft: rgba(18, 100, 163, 0.04);
+  --accent-tint: rgba(18, 100, 163, 0.08);
+  --accent-tint-mid: rgba(18, 100, 163, 0.1);
+  --accent-tint-hi: rgba(18, 100, 163, 0.13);
+  --accent-tint-max: rgba(18, 100, 163, 0.24);
+
+  --good: #147a3d;
+  --good-tint-soft: rgba(20, 122, 61, 0.06);
+  --good-tint: rgba(20, 122, 61, 0.12);
+  --good-border: rgba(20, 122, 61, 0.32);
+  --good-glow: rgba(20, 122, 61, 0.45);
+
+  --warn: #8a5800;
+  --warn-tint: rgba(138, 88, 0, 0.09);
+  --warn-tint-hi: rgba(138, 88, 0, 0.2);
+  --warn-border: rgba(138, 88, 0, 0.3);
+  --warn-border-strong: rgba(138, 88, 0, 0.4);
+
+  --bad: #b3261e;
+  --bad-tint: rgba(179, 38, 30, 0.07);
+  --bad-tint-mid: rgba(179, 38, 30, 0.12);
+  --bad-tint-hi: rgba(179, 38, 30, 0.16);
+  --bad-border: rgba(179, 38, 30, 0.3);
+  --bad-border-strong: rgba(179, 38, 30, 0.4);
+  --bad-rule: rgba(179, 38, 30, 0.45);
+
+  --hover: rgba(23, 28, 38, 0.05);
+  --hover-faint: rgba(23, 28, 38, 0.03);
+  --code-bg: rgba(23, 28, 38, 0.06);
+  --mention: #b3261e;
+  --mention-text: #b3261e;
+  --mark: #ffe58a;
+
+  --shadow: 0 12px 40px rgba(18, 24, 36, 0.16);
+  --shadow-sm: 0 6px 18px rgba(18, 24, 36, 0.12);
+  --scrim: rgba(22, 27, 36, 0.4);
 }
 
 * {
@@ -41,14 +200,14 @@ button {
   color: inherit;
   cursor: pointer;
   border: 1px solid var(--border-strong);
-  background: var(--bg-input);
+  background: var(--bg-button);
   border-radius: 8px;
   padding: 7px 13px;
   transition: background 0.12s ease, border-color 0.12s ease;
 }
 button:hover:not(:disabled) {
-  background: #232834;
-  border-color: #414a5c;
+  background: var(--bg-button-hover);
+  border-color: var(--border-stronger);
 }
 button:disabled {
   opacity: 0.45;
@@ -57,12 +216,12 @@ button:disabled {
 button.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #0b1220;
+  color: var(--text-on-accent);
   font-weight: 600;
 }
 button.primary:hover:not(:disabled) {
-  background: #85b6ff;
-  border-color: #85b6ff;
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 button.ghost {
   background: transparent;
@@ -71,7 +230,7 @@ button.ghost {
   padding: 4px 8px;
 }
 button.ghost:hover:not(:disabled) {
-  background: var(--bg-input);
+  background: var(--bg-button-hover);
   color: var(--text);
 }
 button.danger {
@@ -80,8 +239,8 @@ button.danger {
   background: transparent;
 }
 button.danger:hover:not(:disabled) {
-  background: rgba(248, 113, 113, 0.12);
-  border-color: rgba(248, 113, 113, 0.3);
+  background: var(--bad-tint-mid);
+  border-color: var(--bad-border);
 }
 
 input,
@@ -99,7 +258,7 @@ input:focus,
 textarea:focus,
 select:focus {
   outline: none;
-  border-color: var(--accent-dim);
+  border-color: var(--focus-border);
 }
 textarea {
   resize: vertical;
@@ -132,7 +291,7 @@ label {
 }
 
 .sidebar {
-  background: #0c0e12;
+  background: var(--sidebar);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
@@ -173,7 +332,7 @@ label {
   width: 34px;
   height: 34px;
   border-radius: 9px;
-  background: linear-gradient(135deg, #3b6fd4, #7c4dff);
+  background: linear-gradient(135deg, var(--avatar-from), var(--avatar-to));
   display: grid;
   place-items: center;
   font-size: 13px;
@@ -229,7 +388,7 @@ label {
   padding: 1px 7px;
 }
 .nav-item.active .nav-count {
-  background: #2b3140;
+  background: var(--badge-bg);
 }
 
 .sidebar-foot {
@@ -254,7 +413,7 @@ label {
 }
 .dot.online {
   background: var(--good);
-  box-shadow: 0 0 6px rgba(74, 222, 128, 0.6);
+  box-shadow: 0 0 6px var(--good-glow);
 }
 .dot.connecting {
   background: var(--warn);
@@ -344,15 +503,15 @@ h2:first-of-type {
 }
 .tag.good {
   color: var(--good);
-  border-color: rgba(74, 222, 128, 0.28);
+  border-color: var(--good-border);
 }
 .tag.warn {
   color: var(--warn);
-  border-color: rgba(251, 191, 36, 0.28);
+  border-color: var(--warn-border);
 }
 .tag.bad {
   color: var(--bad);
-  border-color: rgba(248, 113, 113, 0.28);
+  border-color: var(--bad-border);
 }
 .tag.accent {
   color: var(--accent);
@@ -361,7 +520,7 @@ h2:first-of-type {
 
 .banner {
   border: 1px solid var(--accent-dim);
-  background: linear-gradient(180deg, rgba(110, 168, 254, 0.12), rgba(110, 168, 254, 0.04));
+  background: linear-gradient(180deg, var(--accent-tint-mid), var(--accent-tint-soft));
   border-radius: var(--radius);
   padding: 14px 16px;
   margin-bottom: 18px;
@@ -371,12 +530,12 @@ h2:first-of-type {
   gap: 16px;
 }
 .banner.warn {
-  border-color: rgba(251, 191, 36, 0.35);
-  background: rgba(251, 191, 36, 0.07);
+  border-color: var(--warn-border-strong);
+  background: var(--warn-tint);
 }
 .banner.bad {
-  border-color: rgba(248, 113, 113, 0.35);
-  background: rgba(248, 113, 113, 0.07);
+  border-color: var(--bad-border-strong);
+  background: var(--bad-tint);
 }
 
 .tabs {
@@ -422,7 +581,7 @@ h2:first-of-type {
   grid-template-columns: 128px 1fr;
   gap: 14px;
   padding: 9px 0;
-  border-bottom: 1px solid rgba(38, 43, 54, 0.5);
+  border-bottom: 1px solid var(--border-soft);
 }
 .turn-who {
   font-size: 12px;
@@ -544,7 +703,7 @@ h2:first-of-type {
 .bubble.user {
   align-self: flex-end;
   background: var(--accent-dim);
-  border: 1px solid #3a5f9e;
+  border: 1px solid var(--accent-border);
 }
 .bubble.assistant {
   align-self: flex-start;
@@ -613,7 +772,7 @@ h2:first-of-type {
 }
 .persona.selected {
   border-color: var(--accent);
-  background: rgba(110, 168, 254, 0.09);
+  background: var(--accent-tint);
 }
 .persona-name {
   font-weight: 600;
@@ -639,7 +798,7 @@ h2:first-of-type {
   gap: 10px;
   padding: 6px 0;
   font-size: 13px;
-  border-bottom: 1px solid rgba(38, 43, 54, 0.45);
+  border-bottom: 1px solid var(--border-soft);
 }
 .activity-time {
   color: var(--text-faint);
@@ -677,15 +836,6 @@ h2:first-of-type {
 /* =========================================================================
    Workspaces
    ========================================================================= */
-
-:root {
-  --rail: #0a0c10;
-  --sidebar: #0c0e13;
-  --hover: rgba(255, 255, 255, 0.045);
-  --active: rgba(110, 168, 254, 0.16);
-  --mention: #f87171;
-  --shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
-}
 
 /* The shell is rail | sidebar | content. */
 .app {
@@ -757,11 +907,11 @@ h2:first-of-type {
 }
 .rail-tile:hover .rail-icon {
   border-radius: 12px;
-  background: #232834;
+  background: var(--bg-button-hover);
 }
 .rail-tile.active .rail-icon {
   border-radius: 12px;
-  background: #232834;
+  background: var(--bg-button-hover);
 }
 
 .rail-badge {
@@ -773,7 +923,7 @@ h2:first-of-type {
   padding: 0 5px;
   border-radius: 9px;
   background: var(--mention);
-  color: #fff;
+  color: var(--text-on-solid);
   font-size: 11px;
   font-weight: 700;
   line-height: 18px;
@@ -909,7 +1059,7 @@ h2:first-of-type {
   padding: 6px 8px;
 }
 .side-group + .side-group {
-  border-top: 1px solid rgba(38, 43, 54, 0.5);
+  border-top: 1px solid var(--border-soft);
 }
 .side-group-head {
   display: flex;
@@ -1025,10 +1175,10 @@ h2:first-of-type {
 }
 .side-badge.mention {
   background: var(--mention);
-  color: #fff;
+  color: var(--text-on-solid);
 }
 .side-badge.live {
-  background: rgba(74, 222, 128, 0.16);
+  background: var(--good-tint);
   color: var(--good);
 }
 .side-hint {
@@ -1228,11 +1378,11 @@ h2:first-of-type {
   font-weight: 600;
 }
 .new-divider {
-  color: var(--mention);
+  color: var(--mention-text);
 }
 .new-divider::before,
 .new-divider::after {
-  background: rgba(248, 113, 113, 0.45);
+  background: var(--bad-rule);
 }
 .new-divider span {
   font-weight: 700;
@@ -1249,14 +1399,14 @@ h2:first-of-type {
   position: relative;
 }
 .msg:hover {
-  background: rgba(255, 255, 255, 0.022);
+  background: var(--hover-faint);
 }
 .msg.grouped {
   padding-top: 1px;
   padding-bottom: 1px;
 }
 .msg.mentions-me {
-  background: rgba(251, 191, 36, 0.07);
+  background: var(--warn-tint);
   box-shadow: inset 3px 0 0 var(--warn);
 }
 .msg.deleted .msg-deleted {
@@ -1379,17 +1529,17 @@ h2:first-of-type {
 .code-inline {
   font-family: var(--mono);
   font-size: 12.5px;
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--code-bg);
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 1px 4px;
-  color: #f4a8a8;
+  color: var(--text-bad);
 }
 .code-block {
   position: relative;
   margin: 5px 0;
   padding: 10px 12px;
-  background: #0b0d11;
+  background: var(--bg-sunken);
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow-x: auto;
@@ -1418,20 +1568,20 @@ h2:first-of-type {
   border: none;
   font-size: inherit;
   font-weight: 600;
-  background: rgba(110, 168, 254, 0.16);
+  background: var(--accent-tint-hi);
   color: var(--accent);
 }
 .chip-mention.link:hover,
 .chip-channel.link:hover {
-  background: rgba(110, 168, 254, 0.3);
+  background: var(--accent-tint-max);
   border-color: transparent;
 }
 .chip-mention.me {
-  background: rgba(251, 191, 36, 0.22);
+  background: var(--warn-tint-hi);
   color: var(--warn);
 }
 .chip-mention.broadcast {
-  background: rgba(248, 113, 113, 0.18);
+  background: var(--bad-tint-hi);
   color: var(--bad);
 }
 
@@ -1456,7 +1606,7 @@ h2:first-of-type {
 }
 .reaction.on {
   border-color: var(--accent);
-  background: rgba(110, 168, 254, 0.16);
+  background: var(--accent-tint-hi);
 }
 .reaction-count {
   font-size: 11px;
@@ -1512,7 +1662,7 @@ h2:first-of-type {
   background: var(--bg-raised);
   border: 1px solid var(--border-strong);
   border-radius: 8px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-sm);
   z-index: 5;
 }
 .msg:hover .hover-toolbar {
@@ -1541,7 +1691,7 @@ h2:first-of-type {
   padding: 5px 14px;
   font-size: 12px;
   background: var(--accent);
-  color: #0b1220;
+  color: var(--text-on-accent);
   border-color: var(--accent);
   font-weight: 600;
   box-shadow: var(--shadow);
@@ -1549,7 +1699,7 @@ h2:first-of-type {
 
 .pinned-bar {
   border-bottom: 1px solid var(--border);
-  background: rgba(251, 191, 36, 0.06);
+  background: var(--warn-tint);
   padding: 6px 20px;
   max-height: 140px;
   overflow-y: auto;
@@ -1744,7 +1894,7 @@ h2:first-of-type {
   display: grid;
   place-items: center;
   font-weight: 700;
-  color: #fff;
+  color: var(--text-on-solid);
   letter-spacing: 0.02em;
 }
 .presence {
@@ -1776,7 +1926,7 @@ h2:first-of-type {
 .scrim {
   position: fixed;
   inset: 0;
-  background: rgba(6, 8, 11, 0.66);
+  background: var(--scrim);
   display: grid;
   place-items: center;
   z-index: 100;
@@ -1887,7 +2037,7 @@ h2:first-of-type {
   color: var(--bad);
 }
 .menu-item.danger:hover:not(:disabled) {
-  background: rgba(248, 113, 113, 0.14);
+  background: var(--bad-tint-mid);
 }
 .menu-hint {
   color: var(--text-faint);
@@ -2031,13 +2181,13 @@ kbd {
   align-items: center;
   gap: 10px;
   padding: 7px 4px;
-  border-bottom: 1px solid rgba(38, 43, 54, 0.5);
+  border-bottom: 1px solid var(--border-soft);
   width: 100%;
 }
 .member-row.as-button {
   border: none;
   background: transparent;
-  border-bottom: 1px solid rgba(38, 43, 54, 0.5);
+  border-bottom: 1px solid var(--border-soft);
   border-radius: 0;
   text-align: left;
 }
@@ -2090,7 +2240,7 @@ kbd {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 4px;
-  border-bottom: 1px solid rgba(38, 43, 54, 0.5);
+  border-bottom: 1px solid var(--border-soft);
 }
 .browse-name {
   font-weight: 600;
@@ -2213,7 +2363,7 @@ kbd {
   align-items: center;
   gap: 12px;
   padding: 5px 2px;
-  border-bottom: 1px solid rgba(38, 43, 54, 0.4);
+  border-bottom: 1px solid var(--border-soft);
   font-size: 13px;
   color: var(--text-dim);
 }
@@ -2258,7 +2408,7 @@ kbd {
 }
 .activity-card:hover:not(:disabled) {
   border-color: var(--border-strong);
-  background: #1a1e26;
+  background: var(--bg-elevated);
 }
 .activity-body {
   min-width: 0;
@@ -2340,7 +2490,7 @@ kbd {
   justify-content: space-between;
   gap: 16px;
   border: 1px solid var(--accent-dim);
-  background: linear-gradient(180deg, rgba(110, 168, 254, 0.12), rgba(110, 168, 254, 0.04));
+  background: linear-gradient(180deg, var(--accent-tint-mid), var(--accent-tint-soft));
   border-radius: 10px;
   padding: 12px 14px;
 }
@@ -2396,7 +2546,7 @@ kbd {
 }
 .msg.meeting-row.is-live {
   box-shadow: inset 3px 0 0 var(--good);
-  background: rgba(74, 222, 128, 0.045);
+  background: var(--good-tint-soft);
 }
 .meeting-glyph {
   display: block;
@@ -2432,7 +2582,7 @@ kbd {
   gap: 10px;
   padding: 8px 20px;
   border-bottom: 1px solid var(--border);
-  background: rgba(74, 222, 128, 0.07);
+  background: var(--good-tint);
   flex-shrink: 0;
 }
 .live-title {
@@ -2512,7 +2662,7 @@ kbd {
 .member-pick.on {
   opacity: 1;
   border-color: var(--accent);
-  background: rgba(110, 168, 254, 0.1);
+  background: var(--accent-tint-mid);
 }
 
 /* --- unified settings ----------------------------------------------------- */
@@ -2612,4 +2762,355 @@ kbd {
 .card-title.link:hover:not(:disabled) {
   color: var(--accent);
   background: none;
+}
+
+/* =========================================================================
+   Appearance picker
+
+   The two swatches have to show both themes at once, so their colours are the
+   only ones in the file that deliberately do not flip. They are still tokens,
+   just constant ones.
+   ========================================================================= */
+
+.theme-choices {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.theme-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.theme-choice:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--bg-input);
+}
+.theme-choice.on {
+  border-color: var(--accent);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.theme-swatch {
+  display: flex;
+  width: 104px;
+  height: 62px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+}
+.theme-swatch-rail {
+  width: 22px;
+}
+.theme-swatch-body {
+  flex: 1;
+}
+.theme-swatch.dark .theme-swatch-rail {
+  background: var(--preview-dark-rail);
+}
+.theme-swatch.dark .theme-swatch-body {
+  background: var(--preview-dark-bg);
+}
+.theme-swatch.light .theme-swatch-rail {
+  background: var(--preview-light-rail);
+}
+.theme-swatch.light .theme-swatch-body {
+  background: var(--preview-light-bg);
+}
+/* "Match system" is drawn as both, split down the diagonal. */
+.theme-swatch.system .theme-swatch-rail {
+  background: linear-gradient(160deg, var(--preview-dark-rail) 50%, var(--preview-light-rail) 50%);
+}
+.theme-swatch.system .theme-swatch-body {
+  background: linear-gradient(160deg, var(--preview-dark-bg) 50%, var(--preview-light-bg) 50%);
+}
+
+/* =========================================================================
+   Administration
+
+   The member table is the screen an admin lives on, so it is built to be
+   scanned rather than read: one row per person, the things that differentiate
+   them (role, guest scope, whether they are switched off) as tags rather than
+   prose, and the bulk bar appearing only once something is selected.
+   ========================================================================= */
+
+.admin-toolbar {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.admin-toolbar select {
+  width: auto;
+  min-width: 150px;
+}
+
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border: 1px solid var(--accent-dim);
+  background: var(--accent-tint-mid);
+  border-radius: 8px;
+  font-size: 13px;
+}
+.bulk-bar select {
+  width: auto;
+  min-width: 150px;
+}
+
+.select-all {
+  margin: 0 0 6px 2px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.member-check {
+  width: auto;
+  flex: 0 0 auto;
+  margin: 0 2px 0 0;
+}
+
+/* A deactivated row stays legible — it is still a record — but stops competing
+   for attention with the people who are actually here. */
+.member-row.is-deactivated .member-name,
+.member-row.is-deactivated .member-sub {
+  opacity: 0.55;
+}
+
+.member-meta {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+.tab-badge {
+  display: inline-block;
+  margin-left: 6px;
+  min-width: 17px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--mention);
+  color: var(--text-on-solid);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 17px;
+  text-align: center;
+}
+
+.guest-channels {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 4px 12px;
+  max-height: 210px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-sunken);
+}
+.guest-channels .check {
+  margin: 0;
+  font-size: 13px;
+}
+
+.slug-input {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.slug-input span {
+  color: var(--text-faint);
+  font-family: var(--mono);
+}
+
+.permission-table {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.permission-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 12px;
+}
+.permission-row + .permission-row {
+  border-top: 1px solid var(--border-soft);
+}
+.permission-row select {
+  width: auto;
+  min-width: 210px;
+  flex: 0 0 auto;
+}
+.permission-label {
+  font-size: 13.5px;
+}
+.permission-floor {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+.log-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 420px;
+  overflow-y: auto;
+}
+.log-row {
+  display: grid;
+  grid-template-columns: 140px 1fr auto;
+  gap: 12px;
+  align-items: baseline;
+  padding: 7px 2px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.log-actor {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.log-what {
+  color: var(--text-dim);
+}
+.log-detail {
+  color: var(--text-faint);
+}
+.log-when {
+  color: var(--text-faint);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* =========================================================================
+   Signing up
+
+   One question per screen, which is what makes a six-step flow feel shorter
+   than a single form with six fields on it.
+   ========================================================================= */
+
+.onboarding-inner.signup {
+  max-width: 460px;
+}
+.onboarding-inner.signup h1 {
+  margin-bottom: 6px;
+}
+.onboarding-inner.signup h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  margin: 22px 0 8px;
+}
+
+.signup-progress {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 22px;
+}
+.signup-dot {
+  height: 3px;
+  flex: 1;
+  border-radius: 2px;
+  background: var(--border);
+  transition: background 0.2s ease;
+}
+.signup-dot.on {
+  background: var(--accent);
+}
+.signup-dot.done {
+  background: var(--accent-dim);
+}
+
+button.big {
+  width: 100%;
+  padding: 11px 16px;
+  font-size: 14.5px;
+}
+
+/* A text button that reads as a link without pretending to be an anchor. */
+button.linkish {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font-size: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+button.linkish:hover:not(:disabled) {
+  background: none;
+  border-color: transparent;
+  color: var(--accent-hover);
+}
+
+.code-input {
+  display: flex;
+  gap: 8px;
+  margin: 6px 0 4px;
+}
+.code-input input {
+  width: 100%;
+  text-align: center;
+  font-size: 24px;
+  font-family: var(--mono);
+  padding: 10px 0;
+  letter-spacing: 0;
+}
+
+.signup-advanced {
+  margin-top: 26px;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 14px;
+}
+.signup-advanced summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.signup-advanced summary:hover {
+  color: var(--text);
+}
+.signup-advanced[open] summary {
+  margin-bottom: 12px;
+}
+
+/* One row per workspace on offer: the name loud, the reason to pick it quiet. */
+.workspace-choice {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+}
+.workspace-choice:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+}
+.workspace-choice-icon {
+  font-size: 20px;
+}
+.workspace-choice-name {
+  font-weight: 600;
+}
+.workspace-choice-sub {
+  color: var(--text-dim);
+  font-size: 12.5px;
+  white-space: nowrap;
 }

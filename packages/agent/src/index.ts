@@ -14,7 +14,7 @@ export type { RelayNetworkOptions } from './relay-network.js';
 export { WorkspaceBook } from './workspaces.js';
 export type { WorkspaceState, DiscoverableWorkspace } from './workspaces.js';
 export type { AgentNotification } from './agent.js';
-export type { ClientState } from './store.js';
+export type { ClientState, RelaySession } from './store.js';
 export * from './memory/index.js';
 export {
   CONNECTORS,

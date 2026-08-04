@@ -77,8 +77,50 @@ async function seedVault(root) {
   await fs.writeFile(path.join(notes, 'Welcome.md'), '# Welcome\n\nA starting note.\n', 'utf8');
 }
 
+/**
+ * A relay for the app to actually connect to.
+ *
+ * Without one the window opens on "no workspace yet", and everything that is
+ * only reachable once you are in a workspace — the member table, permissions,
+ * invitations — cannot be driven at all.
+ *
+ * Its state files go in their own directory, deliberately not inside the vault:
+ * the app watches the vault recursively, and a relay rewriting JSON in there
+ * every few hundred milliseconds turns every editor test into a race.
+ */
+async function startRelay(root) {
+  const port = 8900 + Math.floor(Math.random() * 400);
+  const dir = `${root}-relay`;
+  await fs.mkdir(dir, { recursive: true });
+  const child = spawn(process.execPath, [path.join(repoRoot, 'packages/server/dist/main.js')], {
+    cwd: dir,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      AI_COWORKER_PORT: String(port),
+      AI_COWORKER_RELAY_NAME: 'Probe relay',
+      AI_COWORKER_WORKSPACE: 'Probe',
+    },
+  });
+  const url = `ws://127.0.0.1:${port}`;
+
+  await new Promise((resolve, reject) => {
+    const deadline = setTimeout(() => reject(new Error('the relay did not start')), 15_000);
+    child.stdout.on('data', (chunk) => {
+      if (String(chunk).includes('listening on')) {
+        clearTimeout(deadline);
+        resolve();
+      }
+    });
+    child.on('error', reject);
+    child.on('exit', (code) => reject(new Error(`the relay exited ${code}`)));
+  });
+  return { url, stop: () => child.kill() };
+}
+
 const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'ai-coworker-ui-'));
 const resultFile = path.join(workspace, 'probe-result.json');
+let relay = null;
 
 try {
   console.log('building the desktop app…');
@@ -89,22 +131,31 @@ try {
 
   await seedVault(workspace);
   console.log(`vault: ${workspace}`);
+  relay = await startRelay(workspace);
+  console.log(`relay: ${relay.url}`);
   console.log('launching the app…\n');
 
   const electron = (await import(path.join(repoRoot, 'node_modules/electron/index.js'))).default;
   // Give the run its own userData. `AI_COWORKER_WORKSPACE` moves the knowledge
   // base but not the app's settings, so without this the suite writes its own
-  // config — including the unreachable relay below — over the config of the
-  // app you actually use, and leaves it there after the test exits.
-  await run(electron, ['.', `--user-data-dir=${path.join(workspace, '.electron')}`], {
+  // config over the config of the app you actually use and leaves it there —
+  // and inherits whatever relay that config already pointed at, which is how a
+  // "fresh" window ends up in somebody else's workspace.
+  //
+  // Beside the vault rather than inside it: the app watches the vault
+  // recursively, and Electron writes to userData constantly.
+  const userData = `${workspace}-userdata`;
+  await fs.mkdir(userData, { recursive: true });
+  await run(electron, ['.', `--user-data-dir=${userData}`], {
     cwd: desktopDir,
     env: {
       ...process.env,
       AI_COWORKER_WORKSPACE: workspace,
-      AI_COWORKER_RELAY: 'ws://127.0.0.1:1',
+      AI_COWORKER_RELAY: relay.url,
       AI_COWORKER_PROBE: path.join(here, 'probe.js'),
       AI_COWORKER_PROBE_OUT: resultFile,
       AI_COWORKER_CAPTURE_DELAY: '2600',
+      AI_COWORKER_PROBE_TIMEOUT: process.env.AI_COWORKER_PROBE_TIMEOUT ?? '300000',
     },
   });
 
@@ -130,6 +181,16 @@ try {
   console.log(`\n${summary.passed}/${summary.total} passed, ${summary.failed} failed`);
   if (summary.failed > 0 || summary.total === 0) process.exitCode = 1;
 } finally {
+  relay?.stop();
+  // The relay flushes its state on the way down, so removing its directory
+  // immediately races that last write.
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const sweep = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 };
+  if (!keep) {
+    for (const extra of [`${workspace}-relay`, `${workspace}-userdata`]) {
+      await fs.rm(extra, sweep);
+    }
+  }
   if (keep) console.log(`\nvault kept at ${workspace}`);
-  else await fs.rm(workspace, { recursive: true, force: true });
+  else await fs.rm(workspace, sweep);
 }

@@ -383,7 +383,7 @@ export function WorkspaceMenu({
           </div>
         </div>
         {item('Invite people', onInvite)}
-        {item('Members', onMembers)}
+        {item('Manage members', onMembers)}
         {item('Edit your profile here', onProfile)}
         <div className="menu-sep" />
         {item('Workspace settings', onSettings)}

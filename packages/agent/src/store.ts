@@ -98,6 +98,21 @@ export interface ClientState {
   /** Custom status, mirrored to every relay on connect. */
   status: UserStatus;
   presence: Presence;
+  /**
+   * The session this person holds on each relay, keyed by relay url. Kept
+   * beside the knowledge base rather than in a browser store because the agent
+   * runs headless too, and it has to be able to dial in without a window open.
+   */
+  sessions: Record<string, RelaySession>;
+}
+
+export interface RelaySession {
+  token: string;
+  email: string;
+  accountId: string;
+  address: string;
+  displayName: string;
+  savedAt: number;
 }
 
 function emptyClientState(): ClientState {
@@ -110,6 +125,7 @@ function emptyClientState(): ClientState {
     lastChannel: {},
     status: emptyStatus(),
     presence: 'active',
+    sessions: {},
   };
 }
 
@@ -627,6 +643,25 @@ export class KnowledgeBase extends EventEmitter {
 
   async setRelays(urls: string[]): Promise<void> {
     this.clientState.relays = [...new Set(urls.filter(Boolean))];
+    await this.saveClient();
+    this.emit('change', 'client');
+  }
+
+  /** The session held on one relay, if the person has signed in to it. */
+  session(relayUrl: string): RelaySession | undefined {
+    return this.clientState.sessions?.[relayUrl];
+  }
+
+  async saveSession(relayUrl: string, session: RelaySession): Promise<void> {
+    this.clientState.sessions ??= {};
+    this.clientState.sessions[relayUrl] = session;
+    await this.saveClient();
+    this.emit('change', 'client');
+  }
+
+  async clearSession(relayUrl: string): Promise<void> {
+    if (!this.clientState.sessions?.[relayUrl]) return;
+    delete this.clientState.sessions[relayUrl];
     await this.saveClient();
     this.emit('change', 'client');
   }

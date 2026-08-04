@@ -26,6 +26,7 @@ import {
   type UserStatus,
   type Workspace,
   type WorkspaceId,
+  type WorkspacePermissions,
   type WorkspaceRole,
   DAY,
   HOUR,
@@ -155,6 +156,7 @@ export class PersonalAgent extends EventEmitter {
 
     this.network = new RelayNetwork({
       profile: () => this.knowledge.publicProfile(true),
+      sessionToken: (relayUrl) => this.knowledge.session(relayUrl)?.token,
       autoConnect: options.autoConnect,
     });
     this.network.on('message', (msg: ServerMessage, client: RelayClient) => {
@@ -958,9 +960,30 @@ export class PersonalAgent extends EventEmitter {
 
   updateWorkspace(
     workspaceId: WorkspaceId,
-    patch: Partial<Pick<Workspace, 'name' | 'description' | 'icon' | 'color' | 'invitePolicy' | 'discoverable'>>,
+    patch: Partial<
+      Pick<
+        Workspace,
+        | 'name'
+        | 'slug'
+        | 'description'
+        | 'icon'
+        | 'color'
+        | 'discoverable'
+        | 'acceptsJoinRequests'
+        | 'emailDomains'
+        | 'domainJoin'
+        | 'defaultChannels'
+      >
+    >,
   ): boolean {
     return this.toWorkspace(workspaceId, { type: 'workspace.update', workspaceId, patch });
+  }
+
+  setWorkspacePermissions(
+    workspaceId: WorkspaceId,
+    patch: Partial<WorkspacePermissions>,
+  ): boolean {
+    return this.toWorkspace(workspaceId, { type: 'workspace.permissions', workspaceId, patch });
   }
 
   deleteWorkspace(workspaceId: WorkspaceId): boolean {
@@ -971,16 +994,88 @@ export class PersonalAgent extends EventEmitter {
     for (const client of this.network.clientList) client.send({ type: 'workspace.discover' });
   }
 
-  setMemberRole(workspaceId: WorkspaceId, address: AgentAddress, role: WorkspaceRole): boolean {
-    return this.toWorkspace(workspaceId, { type: 'workspace.set_role', workspaceId, address, role });
+  setMemberRole(
+    workspaceId: WorkspaceId,
+    addresses: AgentAddress | AgentAddress[],
+    role: WorkspaceRole,
+    guestChannels?: ChannelId[],
+  ): boolean {
+    return this.toWorkspace(workspaceId, {
+      type: 'workspace.set_role',
+      workspaceId,
+      addresses: Array.isArray(addresses) ? addresses : [addresses],
+      role,
+      guestChannels,
+    });
   }
 
-  removeMember(workspaceId: WorkspaceId, address: AgentAddress): boolean {
-    return this.toWorkspace(workspaceId, { type: 'workspace.remove_member', workspaceId, address });
+  removeMember(workspaceId: WorkspaceId, addresses: AgentAddress | AgentAddress[]): boolean {
+    return this.toWorkspace(workspaceId, {
+      type: 'workspace.remove_member',
+      workspaceId,
+      addresses: Array.isArray(addresses) ? addresses : [addresses],
+    });
   }
 
-  setWorkspaceProfile(workspaceId: WorkspaceId, patch: { displayName?: string; title?: string }): boolean {
+  setMemberActive(
+    workspaceId: WorkspaceId,
+    addresses: AgentAddress | AgentAddress[],
+    active: boolean,
+  ): boolean {
+    return this.toWorkspace(workspaceId, {
+      type: 'workspace.set_active',
+      workspaceId,
+      addresses: Array.isArray(addresses) ? addresses : [addresses],
+      active,
+    });
+  }
+
+  transferOwnership(workspaceId: WorkspaceId, address: AgentAddress): boolean {
+    return this.toWorkspace(workspaceId, {
+      type: 'workspace.transfer_ownership',
+      workspaceId,
+      address,
+    });
+  }
+
+  setWorkspaceProfile(
+    workspaceId: WorkspaceId,
+    patch: { address?: AgentAddress; displayName?: string; title?: string },
+  ): boolean {
     return this.toWorkspace(workspaceId, { type: 'workspace.profile', workspaceId, ...patch });
+  }
+
+  // --- joining by request ---------------------------------------------------
+
+  requestToJoin(slug: string, message?: string): boolean {
+    let sent = false;
+    for (const client of this.network.clientList) {
+      sent = client.send({ type: 'workspace.request_join', slug, message }) || sent;
+    }
+    return sent;
+  }
+
+  reviewJoinRequest(
+    workspaceId: WorkspaceId,
+    requestId: string,
+    approve: boolean,
+    role?: WorkspaceRole,
+  ): boolean {
+    return this.toWorkspace(workspaceId, {
+      type: 'workspace.review_join',
+      workspaceId,
+      requestId,
+      approve,
+      role,
+    });
+  }
+
+  listJoinRequests(workspaceId: WorkspaceId): boolean {
+    return this.toWorkspace(workspaceId, { type: 'workspace.join_requests', workspaceId });
+  }
+
+  listAudit(workspaceId: WorkspaceId, limit?: number): boolean {
+    return this.toWorkspace(workspaceId, { type: 'workspace.audit', workspaceId, limit });
   }
 
   createInvite(

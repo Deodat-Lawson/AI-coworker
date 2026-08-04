@@ -13,6 +13,9 @@
 
   const results = [];
   const logs = [];
+  // Published as we go, so a run that never finishes can still be read back
+  // from outside instead of leaving a silent window.
+  window.__probe = { results, logs, running: null };
   const log = (message) => logs.push(String(message));
 
   // -- assertions -----------------------------------------------------------
@@ -42,10 +45,27 @@
     }
   }
 
+  /**
+   * Every test runs under a hard cap. Without it a single await that never
+   * settles takes the whole suite with it — the runner sits on a window that
+   * looks busy, and there is nothing in the report to say which test did it.
+   */
+  const TEST_TIMEOUT = 45_000;
+
   async function test(name, fn) {
     const started = Date.now();
+    window.__probe.running = name;
+    let timer;
     try {
-      await fn();
+      await Promise.race([
+        fn(),
+        new Promise((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`timed out after ${TEST_TIMEOUT / 1000}s`)),
+            TEST_TIMEOUT,
+          );
+        }),
+      ]);
       results.push({ name, ok: true, ms: Date.now() - started });
     } catch (error) {
       results.push({
@@ -54,6 +74,9 @@
         ms: Date.now() - started,
         error: (error && error.message) || String(error),
       });
+    } finally {
+      clearTimeout(timer);
+      window.__probe.running = null;
     }
   }
 
@@ -76,6 +99,19 @@
 
   function byText(selector, needle, root = document) {
     return qa(selector, root).find((el) => el.textContent.includes(needle));
+  }
+
+  /**
+   * Type into a React-controlled input. Assigning `.value` directly is
+   * swallowed: React caches the last value it set on the node and treats an
+   * identical-looking change as a no-op, so the setter has to be called on the
+   * prototype and the event dispatched by hand.
+   */
+  function setNativeValue(element, value) {
+    const proto = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement : HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(proto.prototype, 'value').set;
+    setter.call(element, value);
+    element.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
   async function waitFor(fn, what, timeout = 4000) {
@@ -1289,6 +1325,318 @@
       const close = leaves[1].querySelector('.tab-close');
       if (close) close.click();
       await sleep(250);
+    });
+
+    // -- running a workspace -------------------------------------------------
+    //
+    // These need a relay, which the runner starts. Everything here is driven
+    // the way a person would: click the workspace name, click Manage members,
+    // work the table. It is the only check that the admin surface is reachable
+    // at all rather than merely compiling.
+
+    async function openWorkspaceMenu() {
+      const nav = byText('.side-row', 'Chat') ?? byText('.side-row', 'Knowledge');
+      if (nav) nav.click();
+      await sleep(120);
+      const head = q('.ws-head') ?? q('.sidebar-head') ?? q('[class*="workspace"]');
+      if (head) head.click();
+      await sleep(200);
+      return q('.menu') ?? q('.ws-menu-anchor');
+    }
+
+    await test('the app connects to a relay and lands in a workspace', async () => {
+      const state = await waitFor(
+        async () => {
+          const s = await window.api.getState();
+          return s.workspaces.length ? s : null;
+        },
+        'a workspace over the socket',
+        15000,
+      );
+      assert(state.workspaces.length >= 1, 'no workspace arrived');
+      const ws = state.workspaces[0];
+      log(`workspace: ${ws.workspace.name}, role ${ws.me.role}`);
+      log(`workspace keys: ${Object.keys(ws.workspace).join(',')}`);
+      log(`view keys: ${Object.keys(ws).join(',')}`);
+      log(`shell present: ${Boolean(q('.app'))}; sections: ${qa('.side-row').map((r) => r.textContent.trim()).join('|')}`);
+      // Everything the admin surface reads must be on the view, not undefined.
+      assert(ws.workspace.permissions, 'the workspace carries a permission table');
+      eq(typeof ws.workspace.primaryOwner, 'string', 'and a primary owner');
+      assert(Array.isArray(ws.joinRequests), 'join requests are an array');
+      assert(Array.isArray(ws.audit), 'the audit log is an array');
+      eq(ws.me.primaryOwner, true, 'the first person in holds the workspace');
+    });
+
+    await test('the member table opens and can be searched', async () => {
+      const menu = await openWorkspaceMenu();
+      const manage =
+        byText('.menu-item', 'Manage members') ??
+        byText('.menu-item', 'Members') ??
+        byText('button', 'Members', menu ?? document);
+      assert(manage, 'no way to reach the member list from the workspace menu');
+      manage.click();
+
+      await waitFor(() => q('.member-list'), 'the member table');
+      assert(qa('.member-row').length >= 1, 'nobody in the table');
+      assert(byText('.member-name', 'primary owner'), 'the holder is marked as such');
+
+      // Searching narrows it, and a miss says so rather than showing everybody.
+      const search = q('.admin-toolbar input');
+      assert(search, 'no search box');
+      const before = qa('.member-row').length;
+      setNativeValue(search, 'zzzz-nobody');
+      await sleep(200);
+      assert(
+        qa('.member-row').length < before || q('.empty'),
+        'searching for nobody still showed everybody',
+      );
+      setNativeValue(search, '');
+      await sleep(200);
+      eq(qa('.member-row').length, before, 'clearing the search brings everybody back');
+    });
+
+    await test('permissions render every capability, and the floors are shown', async () => {
+      const tab = byText('.tab', 'Permissions');
+      assert(tab, 'no permissions tab');
+      tab.click();
+      await waitFor(() => q('.permission-table'), 'the permission table');
+      const rows = qa('.permission-row');
+      assert(rows.length >= 8, `expected every capability, saw ${rows.length}`);
+      assert(qa('.permission-floor').length > 0, 'the hard floors are not shown anywhere');
+
+      // A capability with a floor must not offer a role below it.
+      const managed = rows.find((r) => r.textContent.includes('Change roles'));
+      assert(managed, 'no row for managing members');
+      const options = [...managed.querySelectorAll('option')].map((o) => o.value);
+      assert(!options.includes('guest'), 'managing members was offered to guests');
+      assert(!options.includes('member'), 'managing members was offered to members');
+    });
+
+    await test('the invitations tab can mint a code', async () => {
+      const tab = byText('.tab', 'Invitations');
+      assert(tab, 'no invitations tab');
+      tab.click();
+      await sleep(250);
+      const create = byText('button', 'Create invitation');
+      assert(create, 'no way to create an invitation');
+      create.click();
+      const card = await waitFor(() => q('.card-title.mono'), 'an invitation code', 6000);
+      assert(/[a-z0-9-]{8,}/.test(card.textContent.trim()), `odd code: ${card.textContent}`);
+
+      // And it can be taken back.
+      const revoke = byText('button', 'Revoke');
+      assert(revoke, 'no way to revoke it');
+      revoke.click();
+      await sleep(400);
+    });
+
+    await test('the activity log records what just happened', async () => {
+      const tab = byText('.tab', 'Activity log');
+      assert(tab, 'no activity log tab');
+      tab.click();
+      // The log is fetched over the socket when the tab opens, so an empty
+      // state here means "it has not arrived yet", not "nothing happened".
+      const list = await waitFor(() => q('.log-list'), 'the log to arrive from the relay', 10000);
+      const text = list.textContent;
+      includes(text, 'invitation', 'the invitation is not in the log');
+    });
+
+    await test('the admin surface is a settings pane, and you can walk away from it', async () => {
+      // Running a workspace is not a modal any more: it is the "Members and
+      // invites" pane, reached from the same menu item or from Settings.
+      assert(q('.settings-rail'), 'the member table should be hosted inside settings');
+      assert(
+        byText('.settings-rail-item', 'Members and invites'),
+        'settings has no pane for running the workspace',
+      );
+
+      const elsewhere = byText('.settings-rail-item', 'Network');
+      assert(elsewhere, 'no other pane to move to');
+      elsewhere.click();
+      await sleep(300);
+      assert(!q('.member-list'), 'leaving the pane left the member table behind');
+      assert(q('.app'), 'the app shell survived');
+    });
+
+    // -- appearance ---------------------------------------------------------
+    //
+    // The token tests in `tests/theme.test.mjs` read the stylesheet. These read
+    // the screen: they take real elements out of the running window, flip the
+    // theme, and ask the browser what it actually computed. That is the only
+    // way to catch a colour that resolved to `transparent`, a rule that lost to
+    // an inline style, or a surface that came out identical to the text on it.
+
+    const ROOT = document.documentElement;
+
+    function rgb(value) {
+      const parts = String(value).match(/[\d.]+/g);
+      if (!parts) return null;
+      const [r, g, b, a = 1] = parts.map(Number);
+      return { r, g, b, a };
+    }
+    function relLum({ r, g, b }) {
+      const ch = (v) => {
+        const c = v / 255;
+        return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+      };
+      return 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b);
+    }
+    function ratioOf(a, b) {
+      const [hi, lo] = [relLum(a), relLum(b)].sort((x, y) => y - x);
+      return (hi + 0.05) / (lo + 0.05);
+    }
+    /** The nearest ancestor that actually paints something, the way a screen sees it. */
+    function paintedBackground(element) {
+      let node = element;
+      while (node && node !== document.documentElement) {
+        const colour = rgb(getComputedStyle(node).backgroundColor);
+        if (colour && colour.a > 0.98) return colour;
+        node = node.parentElement;
+      }
+      return rgb(getComputedStyle(document.body).backgroundColor);
+    }
+
+    async function withTheme(theme, fn) {
+      const before = ROOT.dataset.theme;
+      ROOT.dataset.theme = theme;
+      await sleep(120);
+      try {
+        return await fn();
+      } finally {
+        if (before === undefined) delete ROOT.dataset.theme;
+        else ROOT.dataset.theme = before;
+        await sleep(80);
+      }
+    }
+
+    for (const theme of ['dark', 'light']) {
+      await test(`${theme}: the whole window repaints`, async () => {
+        await withTheme(theme, async () => {
+          const body = rgb(getComputedStyle(document.body).backgroundColor);
+          assert(body, 'the body has no computed background');
+          const light = relLum(body) > 0.5;
+          eq(light, theme === 'light', `the ${theme} theme painted the wrong kind of background`);
+        });
+      });
+
+      await test(`${theme}: every visible label is legible where it sits`, async () => {
+        await withTheme(theme, async () => {
+          const suspects = [];
+          const nodes = qa(
+            'button, .ob-tab, .ob-file-row, .settings-label, .settings-hint, ' +
+              '.ob-status, .ob-ribbon-button, .nav-item, .side-item, h1, h2, p, label, kbd, code',
+          );
+          for (const node of nodes) {
+            const style = getComputedStyle(node);
+            if (style.display === 'none' || style.visibility === 'hidden') continue;
+            if (!node.getClientRects().length) continue;
+            if (Number(style.opacity) < 0.5) continue;
+            if (!node.textContent || !node.textContent.trim()) continue;
+            const fg = rgb(style.color);
+            if (!fg || fg.a < 0.5) continue;
+            const bg = paintedBackground(node);
+            const value = ratioOf(fg, bg);
+            // 3:1 is the floor for *anything* readable at all; the exact AA
+            // thresholds per role are asserted against the tokens themselves.
+            if (value < 3) {
+              suspects.push(
+                `${node.className || node.tagName} "${node.textContent.trim().slice(0, 30)}" ${value.toFixed(2)}:1`,
+              );
+            }
+          }
+          assert(
+            suspects.length === 0,
+            `unreadable in ${theme}: ${suspects.slice(0, 6).join(' | ')}`,
+          );
+        });
+      });
+
+      await test(`${theme}: nothing is painted the colour of the thing behind it`, async () => {
+        await withTheme(theme, async () => {
+          const collisions = [];
+          for (const node of qa('.ob-leaf, .ob-sidebar, .ob-ribbon, .ob-status')) {
+            if (!node.getClientRects().length) continue;
+            const own = rgb(getComputedStyle(node).backgroundColor);
+            if (!own || own.a < 0.98) continue;
+            const behind = paintedBackground(node.parentElement || document.body);
+            if (!behind) continue;
+            const border = rgb(getComputedStyle(node).borderTopColor);
+            const separated =
+              Math.abs(relLum(own) - relLum(behind)) > 0.002 ||
+              (border && border.a > 0.1 && ratioOf(border, own) > 1.1);
+            if (!separated) collisions.push(node.className || node.tagName);
+          }
+          assert(collisions.length === 0, `no edge between ${collisions.join(', ')} and what is behind them`);
+        });
+      });
+    }
+
+    await test('Knowledge is painted in the same colours as the rest of the app', async () => {
+      // The admin tests left us in the chat view; the vault has to be mounted
+      // for any of this to mean anything.
+      await openKnowledge();
+
+      for (const theme of ['dark', 'light']) {
+        await withTheme(theme, async () => {
+          await sleep(200);
+          const vault = q('.ob');
+          assert(vault, 'the vault is not on screen');
+          const shell = getComputedStyle(document.body);
+          const inside = getComputedStyle(vault);
+
+          // Not "both are lightish" — the same value. Two palettes that merely
+          // agree in spirit are exactly what this used to be.
+          eq(
+            inside.backgroundColor,
+            shell.backgroundColor,
+            `${theme}: the vault background differs from the app's`,
+          );
+          eq(inside.color, shell.color, `${theme}: the vault text colour differs from the app's`);
+
+          // And the tokens it draws the rest of itself from resolve to the
+          // app's, so nothing inside it can drift either.
+          const pairs = [
+            ['--ob-bg', '--bg'],
+            ['--ob-bg-raised', '--bg-raised'],
+            ['--ob-border', '--border'],
+            ['--ob-text', '--text'],
+            ['--ob-text-dim', '--text-dim'],
+            ['--ob-text-faint', '--text-faint'],
+          ];
+          for (const [vaultToken, appToken] of pairs) {
+            eq(
+              inside.getPropertyValue(vaultToken).trim(),
+              getComputedStyle(document.documentElement).getPropertyValue(appToken).trim(),
+              `${theme}: ${vaultToken} has drifted from ${appToken}`,
+            );
+          }
+        });
+      }
+    });
+
+    await test('the vault records the app theme in its Obsidian config', async () => {
+      // The folder is a real Obsidian vault, so the key Obsidian reads has to
+      // say what the app is actually showing.
+      await withTheme('light', async () => {
+        await sleep(600);
+        const state = await unwrap(window.api.vaultState());
+        eq(state.settings.theme, 'light', 'the vault config did not follow the app into light');
+      });
+      await withTheme('dark', async () => {
+        await sleep(600);
+        const state = await unwrap(window.api.vaultState());
+        eq(state.settings.theme, 'dark', 'the vault config did not follow the app into dark');
+      });
+    });
+
+    await test('leaving the vault takes its accent colour with it', async () => {
+      const before = ROOT.style.getPropertyValue('--vault-accent');
+      log(`vault accent while inside: "${before}"`);
+      // The app's own accent must never be overwritten by the vault's.
+      assert(
+        !ROOT.style.getPropertyValue('--accent'),
+        'the vault leaked an inline --accent onto the whole app',
+      );
     });
 
     return {

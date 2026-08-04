@@ -22,7 +22,6 @@ import { cleanup, makeTempDir } from './helpers.mjs';
 async function setup(t) {
   const home = await makeTempDir('ai-coworker-home-');
   const dir = await makeTempDir('ai-coworker-ws-');
-  t.after(() => cleanup([home, dir]));
 
   await fs.mkdir(path.join(home, '.hermes', 'memories'), { recursive: true });
   await fs.writeFile(
@@ -60,7 +59,15 @@ async function setup(t) {
     autoConnect: false,
     memory,
   });
-  t.after(() => agent.shutdown());
+  // Shut the agent down *before* the directory goes away. The agent writes
+  // client.json in the background, and removing the folder out from under an
+  // in-flight atomic rename surfaces as an unhandled rejection attributed to
+  // whichever test happens to be running — which is why this used to fail in a
+  // different place every time.
+  t.after(async () => {
+    await agent.shutdown();
+    await cleanup([home, dir]);
+  });
 
   return { agent, memory, knowledge };
 }
@@ -152,7 +159,6 @@ test('the agent can be asked, in chat, what it would say to someone', async (t) 
 
 test('an agent with no imported memory behaves exactly as before', async (t) => {
   const dir = await makeTempDir('ai-coworker-ws-');
-  t.after(() => cleanup([dir]));
   const knowledge = await KnowledgeBase.open(dir);
   await knowledge.updateProfile({ address: 'solo@northwind', displayName: 'Solo', reports: [] });
   const agent = new PersonalAgent({
@@ -161,7 +167,10 @@ test('an agent with no imported memory behaves exactly as before', async (t) => 
     provider: new MockProvider(),
     autoConnect: false,
   });
-  t.after(() => agent.shutdown());
+  t.after(async () => {
+    await agent.shutdown();
+    await cleanup([dir]);
+  });
 
   assert.deepEqual(agent.digest('self').recalled, []);
   assert.deepEqual(agent.recall({ text: 'anything' }), []);

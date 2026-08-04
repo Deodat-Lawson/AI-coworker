@@ -68,14 +68,30 @@ export interface RelayOptions {
   onMeetingEnded?: (room: MeetingRoom) => void;
   /** Workspace storage and naming. */
   hub?: HubOptions;
+  /**
+   * How hard the relay leans on accounts:
+   *
+   *   off       accounts are not consulted at all
+   *   optional  a token is honoured when presented, and an address that belongs
+   *             to an account can only be used with one (the default)
+   *   required  no token, no connection
+   */
+  auth?: 'off' | 'optional' | 'required';
+  accounts?: AccountLookup;
+}
+
+/** The slice of the account store the transport needs. Keeps the two apart. */
+export interface AccountLookup {
+  resolve(token: string | undefined): { address: AgentAddress; displayName: string } | undefined;
+  forAddress(address: AgentAddress): { address: AgentAddress } | undefined;
 }
 
 export class Relay extends EventEmitter {
   private connections = new Map<AgentAddress, Connection>();
   private negotiations = new Map<string, Negotiation>();
   private meetings = new Map<string, ScheduledMeeting>();
-  private options: Required<Omit<RelayOptions, 'onMeetingEnded' | 'hub'>> &
-    Pick<RelayOptions, 'onMeetingEnded'>;
+  private options: Required<Omit<RelayOptions, 'onMeetingEnded' | 'hub' | 'accounts'>> &
+    Pick<RelayOptions, 'onMeetingEnded' | 'accounts'>;
   readonly hub: WorkspaceHub;
 
   constructor(options: RelayOptions = {}) {
@@ -88,6 +104,8 @@ export class Relay extends EventEmitter {
         options.turnTimeoutMs ?? Number(process.env.AI_COWORKER_TURN_TIMEOUT_MS ?? 240_000),
       joinTimeoutMs: options.joinTimeoutMs ?? 15_000,
       log: options.log ?? (() => {}),
+      auth: options.auth ?? 'optional',
+      accounts: options.accounts,
       onMeetingEnded: options.onMeetingEnded,
     };
     this.hub = new WorkspaceHub({ log: this.options.log, ...options.hub });
@@ -119,7 +137,7 @@ export class Relay extends EventEmitter {
       }
 
       if (message.type === 'hello') {
-        address = this.handleHello(socket, message.profile);
+        address = this.handleHello(socket, message.profile, message.sessionToken);
         return;
       }
 
@@ -164,11 +182,64 @@ export class Relay extends EventEmitter {
     });
   }
 
-  private handleHello(socket: WebSocket, profile: PublicProfile): AgentAddress | null {
+  private handleHello(
+    socket: WebSocket,
+    profile: PublicProfile,
+    sessionToken?: string,
+  ): AgentAddress | null {
     if (!profile?.address || typeof profile.address !== 'string') {
       this.sendSocket(socket, { type: 'error', code: 'bad_profile', message: 'Profile needs an address.' });
       return null;
     }
+
+    // The address on the wire is only worth what backs it. A token proves the
+    // person behind it verified an email, and the address it grants is the one
+    // they get — not the one they typed. Without a token the relay falls back to
+    // taking the claim at face value, which is the historical behaviour and is
+    // only defensible on a network where everybody is already trusted; a relay
+    // started with `auth: 'required'` refuses instead.
+    const account = this.options.accounts?.resolve(sessionToken);
+    if (sessionToken && !account) {
+      this.sendSocket(socket, {
+        type: 'error',
+        code: 'bad_session',
+        message: 'That session has expired. Sign in again.',
+      });
+      socket.close();
+      return null;
+    }
+    if (!account && this.options.auth === 'required') {
+      this.sendSocket(socket, {
+        type: 'error',
+        code: 'auth_required',
+        message: 'This relay requires an account. Sign in to continue.',
+      });
+      socket.close();
+      return null;
+    }
+    if (account && account.address !== profile.address) {
+      this.options.log(
+        `refusing ${profile.address} from the session for ${account.address}`,
+      );
+      this.sendSocket(socket, {
+        type: 'error',
+        code: 'address_mismatch',
+        message: `That session belongs to ${account.address}.`,
+      });
+      socket.close();
+      return null;
+    }
+    // Nobody may present an address that belongs to somebody else's account.
+    if (!account && this.options.accounts?.forAddress(profile.address)) {
+      this.sendSocket(socket, {
+        type: 'error',
+        code: 'auth_required',
+        message: 'That address belongs to an account. Sign in to use it.',
+      });
+      socket.close();
+      return null;
+    }
+
     const address = profile.address;
     const previous = this.connections.get(address);
     if (previous && previous.socket !== socket) previous.socket.close();
@@ -249,23 +320,58 @@ export class Relay extends EventEmitter {
         this.hub.updateWorkspace(address, message.workspaceId, message.patch);
         break;
 
+      case 'workspace.permissions':
+        this.hub.setPermissions(address, message.workspaceId, message.patch);
+        break;
+
       case 'workspace.delete':
         this.hub.deleteWorkspace(address, message.workspaceId);
         break;
 
       case 'workspace.set_role':
-        this.hub.setRole(address, message.workspaceId, message.address, message.role);
+        this.hub.setRole(address, message.workspaceId, message, message.role, message.guestChannels);
         break;
 
       case 'workspace.remove_member':
-        this.hub.removeMember(address, message.workspaceId, message.address);
+        this.hub.removeMember(address, message.workspaceId, message);
+        break;
+
+      case 'workspace.set_active':
+        this.hub.setActive(address, message.workspaceId, message, message.active);
+        break;
+
+      case 'workspace.transfer_ownership':
+        this.hub.transferOwnership(address, message.workspaceId, message.address);
         break;
 
       case 'workspace.profile':
         this.hub.setWorkspaceProfile(address, message.workspaceId, {
+          address: message.address,
           displayName: message.displayName,
           title: message.title,
         });
+        break;
+
+      case 'workspace.request_join':
+        this.hub.requestJoin(address, message.slug, message.message);
+        break;
+
+      case 'workspace.review_join':
+        this.hub.reviewJoin(
+          address,
+          message.workspaceId,
+          message.requestId,
+          message.approve,
+          message.role,
+        );
+        break;
+
+      case 'workspace.join_requests':
+        this.send(address, this.hub.listJoinRequests(address, message.workspaceId));
+        break;
+
+      case 'workspace.audit':
+        this.send(address, this.hub.auditLog(address, message.workspaceId, message.limit));
         break;
 
       // --- invitations ------------------------------------------------------

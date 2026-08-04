@@ -80,8 +80,38 @@ npm run desktop          # dev, with hot reload
 npm run dist             # packaged .dmg / .exe / .AppImage
 ```
 
-On first launch you either pick a demo persona or set yourself up. Run it on
+On first launch you sign in: an email address, the six-digit code that comes
+back, your name, and then either the workspace your colleagues are already in or
+a new one — the same sequence Slack asks for, and for the same reasons. A demo
+persona is one click away on that first screen if you are just looking. Run it on
 five machines pointed at the same relay and that's the product.
+
+### Accounts
+
+The relay knows who people are. An address is minted from a verified email
+(`sarah.chen@northwind.io` becomes `sarahchen@northwind`) and bound to the
+account, so nobody can connect claiming to be somebody else — and a workspace
+made from a company address claims that domain, which is what lets the next
+colleague find the team instead of starting a parallel one.
+
+```bash
+npm run server                       # accounts optional: a session is honoured
+                                     # when presented, and an address that
+                                     # belongs to one cannot be used without it
+AI_COWORKER_REQUIRE_AUTH=1 npm run server   # no account, no connection
+```
+
+Codes are printed to the relay's log by default, because a relay you run for
+your own team has no mail server. Give `Accounts` a `Mailer` to send them for
+real; the moment you do, they stop being handed back over HTTP.
+
+### Light and dark
+
+`⌘⇧L` cycles dark → light → match system, and Settings → Appearance has the same
+three. "Match system" keeps following the machine, including when it flips at
+sunset. There is one control and one palette: the Knowledge tab draws from the
+same theme tokens as the rest of the app, and mirrors the result into the
+vault's `.obsidian/app.json` so Obsidian opened on the same folder agrees.
 
 ### The brain
 
@@ -120,8 +150,12 @@ owns it; everybody after that joins as a member. From there:
 | **Reactions** | Emoji with a picker and six one-tap favourites. |
 | **Unreads** | Per channel, with a "new messages" divider that stays put while you read. Mentions are counted separately, because being named is not the same as traffic. |
 | **Search** | Across everything you can see in a workspace, served by the relay because it holds the full history. |
-| **Invitations** | Codes with optional expiry, use limits, and a named recipient. Discoverable workspaces can also be joined by slug. |
-| **Roles** | Owner, admin, member, guest — enforced on the relay, not just hidden in the UI. |
+| **Invitations** | Codes with optional expiry, use limits, and a named recipient — or emailed straight to a colleague, redeemable only by the address they went to. Discoverable workspaces can also be joined by slug. |
+| **Roles** | A primary owner who cannot be demoted or removed, owners, admins, members, and guests who can be confined to a single channel. Enforced on the relay, not just hidden in the UI. |
+| **Permissions** | Ten capabilities — inviting, creating public and private channels, archiving, renaming, managing people, editing the workspace, posting in the default channel, deleting anybody's message, revoking invitations — each set to the lowest role that may do it, with floors that cannot be lowered. |
+| **Managing people** | A member table you can search, filter by role or status, sort, and select in bulk: change roles, confine a guest to named channels, deactivate, reactivate, remove, or hand the workspace over. Deactivating keeps everything the person said and stops them being mentioned. |
+| **Joining** | Ask an admin to be let in, and see the queue on the other side. Workspaces claim the email domain of whoever made them, so the next colleague to sign up is offered the workspace rather than making a second one. |
+| **Audit log** | Every administrative act — role changes, deactivations, permission edits, invitations — kept on the relay and readable by admins. |
 | **Presence and status** | Active / away / do-not-disturb, plus a custom emoji and message with an optional expiry. |
 | **Notifications** | Per channel and per workspace, with mute, DND, and a dock badge for mentions. What you silence is stored locally; the relay is never told. |
 | **Settings** | One screen for the whole app: you and your agent, availability, the knowledge base, sources, notifications, the workspace, its members and channels, and the network. There is no second place to look. |
@@ -195,12 +229,15 @@ packages/
   agent/     knowledge base, the vault on disk, imported memory + connectors,
              Gemini/offline brain, relay connections, workspace replica,
              meeting logic
-  server/    relay: workspace hub, scheduling, meeting-room moderator
+  server/    relay: workspace hub, accounts and sign-in, scheduling,
+             meeting-room moderator
   desktop/   Electron app — the agent runs in the main process; the renderer
              holds the markdown engine, the editor, the graph and the canvas
 docs/        how sources and sharing work
-tests/       protocol, moderator, knowledge base, workspaces, markup, memory,
-             recall, access, vault, markdown, and a full 3-agent meeting
+tests/       protocol, moderator, knowledge base, workspaces, member and
+             permission management, accounts and registration, themes and
+             contrast, markup, memory, recall, access, vault, markdown, and a
+             full 3-agent meeting
 scripts/     the five-person demo, and the icon generator
 brand/       the mark, as vector — regenerate, don't hand-edit
 ```
@@ -266,7 +303,7 @@ infinite board of cards, embedded notes, groups and arrows.
 
 **Everything else.** Tabs and split panes, a file explorer with drag-to-move,
 daily notes, templates with `{{title}}` and `{{date:…}}`, YAML properties with a
-proper editor, per-vault settings and rebindable hotkeys, light and dark themes,
+proper editor, per-vault settings and rebindable hotkeys,
 export to PDF and HTML, and a trash that a delete can be undone from.
 
 Not included: sync, publishing, mobile, and the community plugin ecosystem.
@@ -296,8 +333,9 @@ canvas views. It is kept out of `npm test` because it needs a display.
 
 | | |
 |---|---|
-| `npm run server` | Start the relay (`:8787`, health at `/health`) |
+| `npm run server` | Start the relay (`:8787`, health at `/health`, sign-in at `/auth/*`) |
 | `AI_COWORKER_WORKSPACE="Acme" npm run server` | Name the workspace newcomers land in |
+| `AI_COWORKER_REQUIRE_AUTH=1 npm run server` | Refuse anybody without a verified account |
 | `npm run desktop` | Desktop app in dev mode |
 | `npm run demo` | Five-person meeting, end to end |
 | `npm test` | Full suite, offline and deterministic |
@@ -355,10 +393,13 @@ per-person briefings; the vault and its editor; the desktop app; and packaging
 config for all three
 platforms.
 
-Known limits: everybody has to be online for their agents to negotiate a time,
-and there is no authentication on the relay — an agent address is taken at face
-value, so it assumes a trusted network. The relay persists workspaces, channels
-and message history (`.relay-workspaces.json`) plus the meeting schedule
-(`.relay-state.json`); meeting transcripts and briefings live only on the
-participants' machines, which is the intent. Message history is capped per
-channel rather than archived, and there are no file uploads.
+Known limits: everybody has to be online for their agents to negotiate a time.
+The relay persists workspaces, channels and message history
+(`.relay-workspaces.json`), accounts and sessions (`.relay-accounts.json`, mode
+`0600`), plus the meeting schedule (`.relay-state.json`); meeting transcripts and
+briefings live only on the participants' machines, which is the intent. Message
+history is capped per channel rather than archived, and there are no file
+uploads. Confirmation codes are printed to the relay's log rather than emailed
+until you give it a mail transport — deliberate, so a relay you start for your
+own team works immediately, but it does mean anybody who can read that log can
+sign in as anybody.

@@ -29,8 +29,20 @@ const api: DesktopApi = {
   setRelayUrl: (url) => ipcRenderer.invoke('relay:set', url),
   reconnect: () => ipcRenderer.invoke('relay:reconnect'),
   setBrain: (input) => ipcRenderer.invoke('brain:set', input),
+  setAppearance: (appearance) => ipcRenderer.invoke('appearance:set', appearance),
   chooseKnowledgeDir: () => ipcRenderer.invoke('knowledge:chooseDir'),
   openKnowledgeDir: () => ipcRenderer.invoke('knowledge:openDir'),
+
+  authConfig: (relayUrl) => ipcRenderer.invoke('auth:config', relayUrl),
+  authStart: (input) => ipcRenderer.invoke('auth:start', input),
+  authVerify: (input) => ipcRenderer.invoke('auth:verify', input),
+  authLogin: (input) => ipcRenderer.invoke('auth:login', input),
+  authProfile: (patch) => ipcRenderer.invoke('auth:profile', patch),
+  authCreateWorkspace: (input) => ipcRenderer.invoke('auth:createWorkspace', input),
+  authJoin: (input) => ipcRenderer.invoke('auth:join', input),
+  authInvite: (input) => ipcRenderer.invoke('auth:invite', input),
+  authFinish: (input) => ipcRenderer.invoke('auth:finish', input),
+  authSignOut: () => ipcRenderer.invoke('auth:signOut'),
 
   openChannel: (workspaceId, channelId) => ipcRenderer.invoke('ws:openChannel', workspaceId, channelId),
   openThread: (workspaceId, channelId, rootId) =>
@@ -50,9 +62,22 @@ const api: DesktopApi = {
   updateWorkspace: (workspaceId, patch) => ipcRenderer.invoke('ws:update', workspaceId, patch),
   deleteWorkspace: (workspaceId) => ipcRenderer.invoke('ws:deleteWorkspace', workspaceId),
   discoverWorkspaces: () => ipcRenderer.invoke('ws:discover'),
-  setMemberRole: (workspaceId, address, role) => ipcRenderer.invoke('ws:setRole', workspaceId, address, role),
-  removeMember: (workspaceId, address) => ipcRenderer.invoke('ws:removeMember', workspaceId, address),
+  setWorkspacePermissions: (workspaceId, patch) =>
+    ipcRenderer.invoke('ws:permissions', workspaceId, patch),
+  setMemberRole: (workspaceId, addresses, role, guestChannels) =>
+    ipcRenderer.invoke('ws:setRole', workspaceId, addresses, role, guestChannels),
+  removeMember: (workspaceId, addresses) => ipcRenderer.invoke('ws:removeMember', workspaceId, addresses),
+  setMemberActive: (workspaceId, addresses, active) =>
+    ipcRenderer.invoke('ws:setActive', workspaceId, addresses, active),
+  transferOwnership: (workspaceId, address) =>
+    ipcRenderer.invoke('ws:transferOwnership', workspaceId, address),
   setWorkspaceProfile: (workspaceId, patch) => ipcRenderer.invoke('ws:profile', workspaceId, patch),
+  requestToJoin: (slug, message, relayUrl) =>
+    ipcRenderer.invoke('ws:requestJoin', slug, message, relayUrl),
+  reviewJoinRequest: (workspaceId, requestId, approve, role) =>
+    ipcRenderer.invoke('ws:reviewJoin', workspaceId, requestId, approve, role),
+  listJoinRequests: (workspaceId) => ipcRenderer.invoke('ws:joinRequests', workspaceId),
+  listAudit: (workspaceId, limit) => ipcRenderer.invoke('ws:audit', workspaceId, limit),
   createInvite: (workspaceId, input) => ipcRenderer.invoke('ws:createInvite', workspaceId, input),
   revokeInvite: (workspaceId, code) => ipcRenderer.invoke('ws:revokeInvite', workspaceId, code),
 

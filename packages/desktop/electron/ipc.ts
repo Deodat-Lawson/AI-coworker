@@ -4,13 +4,16 @@
  */
 
 import type {
+  Appearance,
   Artifact,
+  AuditEntry,
   CalendarBlock,
   Channel,
   ChannelPrefs,
   ChannelReadState,
   Feedback,
   Invite,
+  JoinRequest,
   Meeting,
   MeetingPhase,
   MeetingRecord,
@@ -29,6 +32,7 @@ import type {
   VaultSnapshot,
   Workspace,
   WorkspaceMember,
+  WorkspacePermissions,
   WorkspacePrefs,
   WorkspaceRole,
 } from '@ai-coworker/shared';
@@ -119,6 +123,9 @@ export interface WorkspaceView {
   unread: number;
   mentions: number;
   invites: Invite[];
+  /** Populated only for admins; the relay refuses to send these to anybody else. */
+  joinRequests: JoinRequest[];
+  audit: AuditEntry[];
   prefs: WorkspacePrefs;
 }
 
@@ -195,6 +202,56 @@ export interface AppState {
   relays: string[];
   status: UserStatus;
   presence: Presence;
+  /** The theme the person chose: dark, light, or follow the machine. */
+  appearance: Appearance;
+  /** The account this app is signed in as, if the relay has accounts. */
+  account: { email: string; displayName: string; address: string } | null;
+}
+
+// --- signing up and in -------------------------------------------------------
+
+export interface AuthAccountView {
+  id: string;
+  email: string;
+  displayName: string;
+  address: string;
+  hasPassword: boolean;
+  createdAt: number;
+}
+
+/** A workspace this verified email is already welcome in. */
+export interface WelcomeWorkspaceView {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  icon: string;
+  color: string;
+  memberCount: number;
+  joined: boolean;
+  /** `request` means an admin has to say yes first. */
+  how: 'open' | 'request';
+}
+
+export interface PendingInvitationView {
+  code: string;
+  workspaceId: string;
+  workspaceName: string;
+  role: string;
+  invitedBy: string;
+  expiresAt: number;
+}
+
+/** What both the code path and the password path hand back. */
+export interface AuthResult {
+  account: AuthAccountView;
+  /** True when the account did not exist until this moment. */
+  created: boolean;
+  /** True when they have not named themselves or set a password yet. */
+  needsProfile: boolean;
+  workspaces: WelcomeWorkspaceView[];
+  invitations: PendingInvitationView[];
+  relayUrl: string;
 }
 
 export interface SetupInput {
@@ -257,8 +314,46 @@ export interface DesktopApi {
   setRelayUrl(url: string): Promise<IpcResult>;
   reconnect(): Promise<IpcResult>;
   setBrain(input: { apiKey?: string; model?: string }): Promise<IpcResult>;
+  setAppearance(appearance: Appearance): Promise<IpcResult>;
   chooseKnowledgeDir(): Promise<IpcResult<string | null>>;
   openKnowledgeDir(): Promise<IpcResult>;
+
+  // --- signing up and in ---
+  authConfig(
+    relayUrl?: string,
+  ): Promise<IpcResult<{ relayName: string; accounts: number; codesInResponse: boolean }>>;
+  authStart(input: {
+    email: string;
+    relayUrl?: string;
+  }): Promise<IpcResult<{ email: string; expiresAt: number; devCode?: string }>>;
+  authVerify(input: { email: string; code: string; relayUrl?: string }): Promise<IpcResult<AuthResult>>;
+  authLogin(input: { email: string; password: string; relayUrl?: string }): Promise<IpcResult<AuthResult>>;
+  authProfile(patch: { displayName?: string; password?: string }): Promise<IpcResult<AuthAccountView>>;
+  authCreateWorkspace(input: {
+    name: string;
+    project?: string;
+    description?: string;
+    discoverable?: boolean;
+  }): Promise<IpcResult<{ workspaceId: string; name: string; createdChannel: string }>>;
+  authJoin(input: {
+    workspaceId?: string;
+    code?: string;
+    message?: string;
+  }): Promise<IpcResult<{ workspaceId: string; requested: boolean }>>;
+  authInvite(input: {
+    workspaceId: string;
+    emails: string[];
+  }): Promise<
+    IpcResult<{ invited: { email: string; code: string }[]; failed: { email: string; error: string }[] }>
+  >;
+  /** Create the local knowledge base for the signed-in account and start the agent. */
+  authFinish(input: {
+    knowledgeDir?: string;
+    title?: string;
+    team?: string;
+    focusAreas?: string[];
+  }): Promise<IpcResult>;
+  authSignOut(): Promise<IpcResult>;
 
   // --- workspaces ---
   openChannel(workspaceId: string, channelId: string): Promise<IpcResult>;
@@ -286,12 +381,38 @@ export interface DesktopApi {
   updateWorkspace(workspaceId: string, patch: Partial<Workspace>): Promise<IpcResult>;
   deleteWorkspace(workspaceId: string): Promise<IpcResult>;
   discoverWorkspaces(): Promise<IpcResult>;
-  setMemberRole(workspaceId: string, address: string, role: WorkspaceRole): Promise<IpcResult>;
-  removeMember(workspaceId: string, address: string): Promise<IpcResult>;
-  setWorkspaceProfile(workspaceId: string, patch: { displayName?: string; title?: string }): Promise<IpcResult>;
+  setWorkspacePermissions(workspaceId: string, patch: Partial<WorkspacePermissions>): Promise<IpcResult>;
+  setMemberRole(
+    workspaceId: string,
+    addresses: string | string[],
+    role: WorkspaceRole,
+    guestChannels?: string[],
+  ): Promise<IpcResult>;
+  removeMember(workspaceId: string, addresses: string | string[]): Promise<IpcResult>;
+  setMemberActive(workspaceId: string, addresses: string | string[], active: boolean): Promise<IpcResult>;
+  transferOwnership(workspaceId: string, address: string): Promise<IpcResult>;
+  setWorkspaceProfile(
+    workspaceId: string,
+    patch: { address?: string; displayName?: string; title?: string },
+  ): Promise<IpcResult>;
+  requestToJoin(slug: string, message?: string, relayUrl?: string): Promise<IpcResult>;
+  reviewJoinRequest(
+    workspaceId: string,
+    requestId: string,
+    approve: boolean,
+    role?: WorkspaceRole,
+  ): Promise<IpcResult>;
+  listJoinRequests(workspaceId: string): Promise<IpcResult>;
+  listAudit(workspaceId: string, limit?: number): Promise<IpcResult>;
   createInvite(
     workspaceId: string,
-    input?: { invitedAddress?: string; expiresInHours?: number; maxUses?: number },
+    input?: {
+      invitedAddress?: string;
+      role?: WorkspaceRole;
+      expiresInHours?: number;
+      maxUses?: number;
+      channels?: string[];
+    },
   ): Promise<IpcResult>;
   revokeInvite(workspaceId: string, code: string): Promise<IpcResult>;
 

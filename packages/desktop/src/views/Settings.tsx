@@ -1,16 +1,21 @@
 import { useEffect, useState } from 'react';
 
 import {
+  type Appearance,
   type ChannelPrefs,
   type NotifyLevel,
   type WorkspaceRole,
+  APPEARANCES,
+  APPEARANCE_LABELS,
   WORKSPACE_COLORS,
   WORKSPACE_ICONS,
   isDirect,
 } from '@ai-coworker/shared';
 
+import { AdministrationPanel } from '../components/Administration.js';
 import { SHORTCUTS } from '../components/dialogs.js';
-import { Avatar, ConfirmButton, Field } from '../components/ui.js';
+import { ConfirmButton, Field } from '../components/ui.js';
+import { watchAppearance } from '../lib/theme.js';
 import { api, unwrap, type AppState, type WorkspaceView } from '../lib/api.js';
 import { dateTimeOf, plural, relative } from '../lib/format.js';
 import Sources from './Sources.js';
@@ -34,6 +39,7 @@ export type SettingsPane =
   | 'knowledge'
   | 'sources'
   | 'network'
+  | 'appearance'
   | 'shortcuts';
 
 const PANES: { key: SettingsPane; label: string; group: string }[] = [
@@ -47,6 +53,7 @@ const PANES: { key: SettingsPane; label: string; group: string }[] = [
   { key: 'members', label: 'Members and invites', group: 'This workspace' },
   { key: 'channels', label: 'Channels', group: 'This workspace' },
   { key: 'network', label: 'Network', group: 'App' },
+  { key: 'appearance', label: 'Appearance', group: 'App' },
   { key: 'shortcuts', label: 'Shortcuts', group: 'App' },
 ];
 
@@ -111,6 +118,7 @@ export default function Settings({
         ) : null}
         {pane === 'sources' ? <Sources state={state} /> : null}
         {pane === 'network' ? <NetworkPane state={state} /> : null}
+        {pane === 'appearance' ? <AppearancePane state={state} /> : null}
         {pane === 'shortcuts' ? <ShortcutsPane /> : null}
       </div>
     </div>
@@ -183,6 +191,39 @@ function AccountPane({ state, workspace }: { state: AppState; workspace: Workspa
         How your agent introduces you to other agents. Everything here is on your machine; only what
         is published to a workspace directory leaves it.
       </p>
+
+      <h2>Account</h2>
+      <div className="card">
+        {state.account ? (
+          <>
+            <div className="row">
+              <Field label="Signed in as">
+                <input readOnly value={state.account.email} />
+              </Field>
+              <Field label="Agent address">
+                <input readOnly value={state.account.address} />
+              </Field>
+            </div>
+            <p className="hint">
+              Your address is derived from your email and fixed. The relay checks it against this
+              session, so nobody else can post as you.
+            </p>
+            <ConfirmButton
+              label="Sign out on this machine"
+              confirmLabel="Sign out — the knowledge base stays"
+              onConfirm={() => void api.authSignOut()}
+            />
+          </>
+        ) : (
+          <p className="card-sub" style={{ marginTop: 0 }}>
+            This app is running without an account: the relay takes your agent address at face
+            value, which is only safe on a network where everybody already is. Point it at a relay
+            with accounts and sign in to fix that.
+          </p>
+        )}
+      </div>
+
+      <h2>How your agent represents you</h2>
 
       <div className="card">
         <div className="row">
@@ -629,7 +670,6 @@ function WorkspacePane({ workspace }: { workspace: WorkspaceView | undefined }) 
   const [icon, setIcon] = useState(workspace?.workspace.icon ?? '');
   const [color, setColor] = useState(workspace?.workspace.color ?? '');
   const [discoverable, setDiscoverable] = useState(workspace?.workspace.discoverable ?? false);
-  const [invitePolicy, setInvitePolicy] = useState(workspace?.workspace.invitePolicy ?? 'anyone');
   const [note, save, busy] = useSaver();
 
   if (!workspace) return <NoWorkspace />;
@@ -683,16 +723,6 @@ function WorkspacePane({ workspace }: { workspace: WorkspaceView | undefined }) 
             ))}
           </div>
         </Field>
-        <Field label="Who can invite people">
-          <select
-            value={invitePolicy}
-            disabled={!canEdit}
-            onChange={(e) => setInvitePolicy(e.target.value as typeof invitePolicy)}
-          >
-            <option value="anyone">Any member</option>
-            <option value="admins">Admins only</option>
-          </select>
-        </Field>
         <Field label="Discovery" hint="Discoverable workspaces are listed to everyone on this relay.">
           <label className="check">
             <input
@@ -716,7 +746,6 @@ function WorkspacePane({ workspace }: { workspace: WorkspaceView | undefined }) 
                   icon,
                   color,
                   discoverable,
-                  invitePolicy,
                 }),
               ),
             )
@@ -726,6 +755,11 @@ function WorkspacePane({ workspace }: { workspace: WorkspaceView | undefined }) 
         </button>
         {note}
       </div>
+
+      <p className="hint">
+        Who is allowed to do what here — invite people, make channels, manage members — lives under{' '}
+        <strong>Members and invites</strong>, on the Permissions tab.
+      </p>
 
       <h2>Leaving</h2>
       <div className="card">
@@ -760,6 +794,13 @@ function WorkspacePane({ workspace }: { workspace: WorkspaceView | undefined }) 
 // Members and invites
 // ---------------------------------------------------------------------------
 
+/**
+ * Members, invitations, join requests, permissions and the audit log.
+ *
+ * This is the same surface the workspace menu used to open in a modal — hosted
+ * here rather than reimplemented, so there is one place that runs a workspace
+ * and not two that drift apart.
+ */
 function MembersPane({
   workspace,
   onMessage,
@@ -767,21 +808,7 @@ function MembersPane({
   workspace: WorkspaceView | undefined;
   onMessage: (address: string) => void;
 }) {
-  const [query, setQuery] = useState('');
-  const [address, setAddress] = useState('');
-  const [copied, setCopied] = useState('');
-  const [note, save, busy] = useSaver();
-
   if (!workspace) return <NoWorkspace />;
-  const id = workspace.workspace.id;
-  const canManage = workspace.me.role === 'owner' || workspace.me.role === 'admin';
-  const needle = query.trim().toLowerCase();
-  const people = workspace.members.filter(
-    (m) =>
-      !needle ||
-      m.displayName.toLowerCase().includes(needle) ||
-      m.address.toLowerCase().includes(needle),
-  );
 
   return (
     <>
@@ -790,126 +817,7 @@ function MembersPane({
         {plural(workspace.members.length, 'member')} in {workspace.workspace.name}. Every one of them
         has their own agent on their own machine.
       </p>
-
-      <input placeholder="Find someone" value={query} onChange={(e) => setQuery(e.target.value)} />
-
-      <div className="card">
-        {people.map((member) => (
-          <div className="member-row" key={member.address}>
-            <Avatar
-              name={member.displayName}
-              address={member.address}
-              size={34}
-              presence={member.presence}
-            />
-            <div className="member-text">
-              <div className="member-name">
-                {member.displayName}
-                {member.address === workspace.me.address ? <span className="tag small">you</span> : null}
-                <span className={`tag small ${member.role === 'owner' ? 'accent' : ''}`}>
-                  {member.role}
-                </span>
-                {member.agentOnline ? <span className="tag small good">agent online</span> : null}
-              </div>
-              <div className="member-sub">{member.title || member.address}</div>
-            </div>
-            <div className="member-actions">
-              {member.address === workspace.me.address ? null : (
-                <button onClick={() => onMessage(member.address)}>Message</button>
-              )}
-              {canManage && member.address !== workspace.me.address ? (
-                <>
-                  <select
-                    value={member.role}
-                    onChange={(e) =>
-                      void save(
-                        () => unwrap(api.setMemberRole(id, member.address, e.target.value as WorkspaceRole)),
-                        'Role updated.',
-                      )
-                    }
-                  >
-                    <option value="guest">guest</option>
-                    <option value="member">member</option>
-                    <option value="admin">admin</option>
-                    {workspace.me.role === 'owner' ? <option value="owner">owner</option> : null}
-                  </select>
-                  <ConfirmButton
-                    label="Remove"
-                    confirmLabel="Confirm"
-                    onConfirm={() =>
-                      void save(() => unwrap(api.removeMember(id, member.address)), 'Removed.')
-                    }
-                  />
-                </>
-              ) : null}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <h2>Invitations</h2>
-      <div className="card">
-        <Field
-          label="Invite one person (optional)"
-          hint="Leave blank for a code anybody can use. With an address, only that agent can redeem it."
-        >
-          <div className="row">
-            <input
-              value={address}
-              onChange={(e) => setAddress(e.target.value)}
-              placeholder="sarah@northwind"
-            />
-            <button
-              style={{ flex: '0 0 auto' }}
-              className="primary"
-              disabled={busy}
-              onClick={() =>
-                void save(async () => {
-                  await unwrap(api.createInvite(id, { invitedAddress: address.trim() || undefined }));
-                  setAddress('');
-                }, 'Invite created.')
-              }
-            >
-              {busy ? 'Creating…' : 'Create invite'}
-            </button>
-          </div>
-        </Field>
-
-        {workspace.invites.length === 0 ? (
-          <div className="empty">No live invitations.</div>
-        ) : (
-          workspace.invites.map((invite) => (
-            <div className="member-row" key={invite.code}>
-              <div className="member-text">
-                <div className="member-name mono">{invite.code}</div>
-                <div className="member-sub">
-                  {invite.invitedAddress ? `For ${invite.invitedAddress}` : 'Anyone with the code'} ·{' '}
-                  {invite.expiresAt ? `expires ${relative(invite.expiresAt)}` : 'no expiry'}
-                  {invite.maxUses ? ` · ${invite.uses}/${invite.maxUses} used` : ''}
-                </div>
-              </div>
-              <div className="member-actions">
-                <button
-                  onClick={() => {
-                    void navigator.clipboard?.writeText(invite.code);
-                    setCopied(invite.code);
-                    setTimeout(() => setCopied(''), 1500);
-                  }}
-                >
-                  {copied === invite.code ? 'Copied' : 'Copy'}
-                </button>
-                <button
-                  className="danger"
-                  onClick={() => void save(() => unwrap(api.revokeInvite(id, invite.code)), 'Revoked.')}
-                >
-                  Revoke
-                </button>
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-      {note}
+      <AdministrationPanel workspace={workspace} onMessage={onMessage} />
     </>
   );
 }
@@ -1178,6 +1086,45 @@ function NetworkPane({ state }: { state: AppState }) {
 // ---------------------------------------------------------------------------
 // Shortcuts
 // ---------------------------------------------------------------------------
+
+function AppearancePane({ state }: { state: AppState }) {
+  // Paint first, persist second: the round trip through the main process is
+  // fast, but not as fast as an eye.
+  const choose = (next: Appearance) => {
+    watchAppearance(next);
+    void api.setAppearance(next);
+  };
+
+  return (
+    <>
+      <h1>Appearance</h1>
+      <p className="subtitle">Light, dark, or whatever your machine is doing.</p>
+      <div className="card">
+        <div className="theme-choices" role="radiogroup" aria-label="Theme">
+          {APPEARANCES.map((option) => (
+            <button
+              key={option}
+              role="radio"
+              aria-checked={state.appearance === option}
+              className={`theme-choice ${state.appearance === option ? 'on' : ''}`}
+              onClick={() => choose(option)}
+            >
+              <span className={`theme-swatch ${option}`} aria-hidden="true">
+                <span className="theme-swatch-rail" />
+                <span className="theme-swatch-body" />
+              </span>
+              {APPEARANCE_LABELS[option]}
+            </button>
+          ))}
+        </div>
+        <p className="hint">
+          <kbd>⌘⇧L</kbd> cycles through these from anywhere. "Match system" follows your machine as
+          it changes, including when it switches on its own at sunset.
+        </p>
+      </div>
+    </>
+  );
+}
 
 function ShortcutsPane() {
   return (

@@ -25,11 +25,13 @@ import type {
   TranscriptEntry,
 } from './domain.js';
 import type {
+  AuditEntry,
   Channel,
   ChannelId,
   ChannelKind,
   ChannelReadState,
   Invite,
+  JoinRequest,
   Message,
   MessageId,
   Presence,
@@ -38,6 +40,7 @@ import type {
   Workspace,
   WorkspaceId,
   WorkspaceMember,
+  WorkspacePermissions,
   WorkspaceRole,
 } from './workspace.js';
 
@@ -61,6 +64,13 @@ export interface HelloMessage {
   protocolVersion: string;
   profile: PublicProfile;
   capabilities: string[];
+  /**
+   * Proof that the address in the profile belongs to the person presenting it,
+   * obtained from the relay's sign-in endpoints. A relay may accept
+   * connections without one on a trusted network, but when it is supplied the
+   * address it grants wins over the address that was claimed.
+   */
+  sessionToken?: string;
 }
 
 export interface DirectoryListMessage {
@@ -105,7 +115,28 @@ export interface WorkspaceLeaveMessage {
 export interface WorkspaceUpdateMessage {
   type: 'workspace.update';
   workspaceId: WorkspaceId;
-  patch: Partial<Pick<Workspace, 'name' | 'description' | 'icon' | 'color' | 'invitePolicy' | 'discoverable'>>;
+  patch: Partial<
+    Pick<
+      Workspace,
+      | 'name'
+      | 'slug'
+      | 'description'
+      | 'icon'
+      | 'color'
+      | 'discoverable'
+      | 'acceptsJoinRequests'
+      | 'emailDomains'
+      | 'domainJoin'
+      | 'defaultChannels'
+    >
+  >;
+}
+
+/** Who may do what, edited one capability at a time or in a batch. */
+export interface WorkspacePermissionsMessage {
+  type: 'workspace.permissions';
+  workspaceId: WorkspaceId;
+  patch: Partial<WorkspacePermissions>;
 }
 
 export interface WorkspaceDeleteMessage {
@@ -113,25 +144,91 @@ export interface WorkspaceDeleteMessage {
   workspaceId: WorkspaceId;
 }
 
+/**
+ * Change one or many people's roles. Slack's member table lets you select a
+ * dozen contractors and make them all guests at once; doing that as a dozen
+ * round trips would half-apply on a flaky connection.
+ */
 export interface WorkspaceSetRoleMessage {
   type: 'workspace.set_role';
   workspaceId: WorkspaceId;
-  address: AgentAddress;
+  /** One address, or several. Both spellings are accepted. */
+  address?: AgentAddress;
+  addresses?: AgentAddress[];
   role: WorkspaceRole;
+  /** For guests: confine them to these channels. Empty gives the run of the place. */
+  guestChannels?: ChannelId[];
 }
 
 export interface WorkspaceRemoveMemberMessage {
   type: 'workspace.remove_member';
   workspaceId: WorkspaceId;
+  address?: AgentAddress;
+  addresses?: AgentAddress[];
+}
+
+/**
+ * Switching somebody off without erasing them: they stop being able to read,
+ * post or be mentioned, and everything they already said stays where it is.
+ * This is what "removing" somebody should almost always mean.
+ */
+export interface WorkspaceSetActiveMessage {
+  type: 'workspace.set_active';
+  workspaceId: WorkspaceId;
+  address?: AgentAddress;
+  addresses?: AgentAddress[];
+  active: boolean;
+}
+
+/** Hand the workspace over. Only the primary owner can, and only to a member. */
+export interface WorkspaceTransferOwnershipMessage {
+  type: 'workspace.transfer_ownership';
+  workspaceId: WorkspaceId;
   address: AgentAddress;
 }
 
-/** Per-workspace identity: the same person can present differently in each. */
+/**
+ * Per-workspace identity: the same person can present differently in each.
+ * An admin may pass `address` to correct somebody else's — a real need when a
+ * directory sync gets a name wrong and the person is on holiday.
+ */
 export interface WorkspaceProfileMessage {
   type: 'workspace.profile';
   workspaceId: WorkspaceId;
+  address?: AgentAddress;
   displayName?: string;
   title?: string;
+}
+
+// --- join requests ---------------------------------------------------------
+
+export interface WorkspaceRequestJoinMessage {
+  type: 'workspace.request_join';
+  /** The slug of the workspace being asked for. */
+  slug: string;
+  message?: string;
+}
+
+export interface WorkspaceReviewJoinMessage {
+  type: 'workspace.review_join';
+  workspaceId: WorkspaceId;
+  requestId: string;
+  approve: boolean;
+  /** What to let them in as, when approving. */
+  role?: WorkspaceRole;
+}
+
+export interface WorkspaceJoinRequestsMessage {
+  type: 'workspace.join_requests';
+  workspaceId: WorkspaceId;
+}
+
+// --- audit -----------------------------------------------------------------
+
+export interface WorkspaceAuditMessage {
+  type: 'workspace.audit';
+  workspaceId: WorkspaceId;
+  limit?: number;
 }
 
 // --- invitations -----------------------------------------------------------
@@ -431,10 +528,17 @@ export type ClientMessage =
   | WorkspaceJoinMessage
   | WorkspaceLeaveMessage
   | WorkspaceUpdateMessage
+  | WorkspacePermissionsMessage
   | WorkspaceDeleteMessage
   | WorkspaceSetRoleMessage
   | WorkspaceRemoveMemberMessage
+  | WorkspaceSetActiveMessage
+  | WorkspaceTransferOwnershipMessage
   | WorkspaceProfileMessage
+  | WorkspaceRequestJoinMessage
+  | WorkspaceReviewJoinMessage
+  | WorkspaceJoinRequestsMessage
+  | WorkspaceAuditMessage
   | InviteCreateMessage
   | InviteRevokeMessage
   | InviteListMessage
@@ -596,6 +700,34 @@ export interface ReadUpdatedMessage {
   read: ChannelReadState;
 }
 
+/** The queue of people asking to be let in. Admins only. */
+export interface JoinRequestsResultMessage {
+  type: 'workspace.join_requests.result';
+  workspaceId: WorkspaceId;
+  requests: JoinRequest[];
+}
+
+/** Pushed to admins the moment somebody asks, so the queue is never stale. */
+export interface JoinRequestedMessage {
+  type: 'workspace.join_requested';
+  workspaceId: WorkspaceId;
+  request: JoinRequest;
+}
+
+/** Told to the person who asked, whichever way it went. */
+export interface JoinRequestDecidedMessage {
+  type: 'workspace.join_decided';
+  workspaceId: WorkspaceId;
+  workspaceName: string;
+  approved: boolean;
+}
+
+export interface AuditResultMessage {
+  type: 'workspace.audit.result';
+  workspaceId: WorkspaceId;
+  entries: AuditEntry[];
+}
+
 export interface InviteCreatedMessage {
   type: 'invite.created';
   workspaceId: WorkspaceId;
@@ -723,6 +855,10 @@ export type ServerMessage =
   | WorkspaceDiscoverResultMessage
   | WorkspaceMemberMessage
   | WorkspaceMemberRemovedMessage
+  | JoinRequestsResultMessage
+  | JoinRequestedMessage
+  | JoinRequestDecidedMessage
+  | AuditResultMessage
   | ChannelUpsertedMessage
   | ChannelRemovedMessage
   | MessageNewMessage
@@ -759,10 +895,17 @@ const CLIENT_TYPES = new Set<ClientMessage['type']>([
   'workspace.join',
   'workspace.leave',
   'workspace.update',
+  'workspace.permissions',
   'workspace.delete',
   'workspace.set_role',
   'workspace.remove_member',
+  'workspace.set_active',
+  'workspace.transfer_ownership',
   'workspace.profile',
+  'workspace.request_join',
+  'workspace.review_join',
+  'workspace.join_requests',
+  'workspace.audit',
   'invite.create',
   'invite.revoke',
   'invite.list',
@@ -813,6 +956,10 @@ const SERVER_TYPES = new Set<ServerMessage['type']>([
   'workspace.discover.result',
   'workspace.member',
   'workspace.member_removed',
+  'workspace.join_requests.result',
+  'workspace.join_requested',
+  'workspace.join_decided',
+  'workspace.audit.result',
   'channel.upserted',
   'channel.removed',
   'message.new',

@@ -15,6 +15,12 @@ export type ConnectionState = 'offline' | 'connecting' | 'online' | 'error';
 export interface RelayClientOptions {
   url: string;
   profile: () => PublicProfile;
+  /**
+   * The session this agent connects as, when the relay has accounts. Read
+   * afresh on every connect so signing in or out takes effect on reconnect
+   * rather than needing the process restarted.
+   */
+  sessionToken?: () => string | undefined;
   /** Exponential backoff ceiling. */
   maxBackoffMs?: number;
   autoReconnect?: boolean;
@@ -78,6 +84,7 @@ export class RelayClient extends EventEmitter {
         protocolVersion: PROTOCOL_VERSION,
         profile: this.options.profile(),
         capabilities: CLIENT_CAPABILITIES,
+        sessionToken: this.options.sessionToken?.(),
       });
       this.pingTimer = setInterval(() => this.send({ type: 'ping' }), 20_000);
     });
