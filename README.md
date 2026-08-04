@@ -308,6 +308,16 @@ caps clear the bead by the same optical margin at every scale. Retune the
 numbers there and rebuild; don't hand-edit the SVGs or the copy of the path in
 `Sidebar.tsx`.
 
+A packaged build wears all of this already — electron-builder writes our name
+and `.icns` into the bundle. A run from source has no bundle of its own; it
+borrows the one inside `node_modules/electron`, which is called Electron and
+carries Electron's icon. So `npm run desktop` first renames that bundle to
+`Stead.app` and copies our icon in (`packages/desktop/scripts/dev-identity.mjs`),
+then repoints the `electron` package's `path.txt` at it. The Dock names a
+running app after the bundle it launched, which is why the rename is the part
+that matters — setting the name from JavaScript is too late for the Dock. A
+reinstall undoes it and the next launch redoes it; nothing shipped depends on it.
+
 ---
 
 ## Status

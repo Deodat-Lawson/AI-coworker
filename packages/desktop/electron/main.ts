@@ -43,10 +43,12 @@ import type {
 import { emptyStatus, isDirect } from '@ai-coworker/shared';
 import {
   BrowserWindow,
+  Menu,
   Notification,
   app,
   dialog,
   ipcMain,
+  nativeImage,
   net,
   protocol,
   shell,
@@ -70,6 +72,72 @@ import type {
 import { MEMORY_CHANNELS, buildMemoryState, registerMemoryIpc } from './memory-ipc.js';
 
 const DEFAULT_RELAY = process.env.AI_COWORKER_RELAY || 'ws://localhost:8787';
+
+// --- identity ----------------------------------------------------------------
+// Kept in step with electron-builder's `productName` and `appId` in package.json.
+
+const APP_NAME = 'Stead';
+const APP_ID = 'app.stead.desktop';
+
+/**
+ * The app answers to its own name whether it was launched from a bundle or from
+ * source. A packaged build inherits the name from electron-builder, but
+ * `npm run desktop` runs inside Electron's own bundle, which otherwise calls
+ * itself Electron in the menu bar, in notifications, and on disk.
+ *
+ * This runs at import time, before anything reads it: `app.getPath('userData')`
+ * is derived from the name, so setting it late would strand a run's config in a
+ * different directory than the one the rest of the app uses.
+ */
+app.setName(APP_NAME);
+// Windows groups taskbar buttons and attributes notifications by this id.
+app.setAppUserModelId(APP_ID);
+
+/** The generated icon, as shipped in the desktop package's build resources. */
+function brandIconPath(ext: 'png' | 'icns'): string {
+  return path.join(__dirname, `../../build/icon.${ext}`);
+}
+
+/**
+ * Dress the dock/taskbar for a run from source. Packaged builds carry the icon
+ * in the bundle; unpackaged ones are wearing Electron's, so replace it.
+ */
+function applyDockIcon(): void {
+  if (app.isPackaged || process.platform !== 'darwin') return;
+  const icon = nativeImage.createFromPath(brandIconPath('png'));
+  if (!icon.isEmpty()) app.dock?.setIcon(icon);
+}
+
+/**
+ * The macOS application menu. Electron's default is fine in shape, but its
+ * first submenu — About, Hide, Quit — is built from the *bundle's* name, so
+ * from source it reads "About Electron". Building it here takes the name from
+ * `app.name` instead. Elsewhere the default menu already says the right thing.
+ */
+function applyMenu(): void {
+  if (process.platform !== 'darwin') return;
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      {
+        label: app.name,
+        submenu: [
+          { role: 'about', label: `About ${app.name}` },
+          { type: 'separator' },
+          { role: 'services' },
+          { type: 'separator' },
+          { role: 'hide', label: `Hide ${app.name}` },
+          { role: 'hideOthers' },
+          { role: 'unhide' },
+          { type: 'separator' },
+          { role: 'quit', label: `Quit ${app.name}` },
+        ],
+      },
+      { role: 'editMenu' },
+      { role: 'viewMenu' },
+      { role: 'windowMenu' },
+    ]),
+  );
+}
 
 interface Config {
   knowledgeDir?: string;
@@ -1140,9 +1208,7 @@ function createWindow(): void {
     // Packaged builds get their icon from electron-builder; this is what makes
     // the window and taskbar look right when running from source on
     // Linux/Windows, where Electron would otherwise show its own icon.
-    ...(process.platform === 'darwin'
-      ? {}
-      : { icon: path.join(__dirname, '../../build/icon.png') }),
+    ...(process.platform === 'darwin' ? {} : { icon: brandIconPath('png') }),
     backgroundColor: '#0f1115',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
@@ -1211,6 +1277,13 @@ function registerVaultProtocol(): void {
 }
 
 app.whenReady().then(async () => {
+  applyDockIcon();
+  applyMenu();
+  app.setAboutPanelOptions({
+    applicationName: app.name,
+    applicationVersion: app.getVersion(),
+    iconPath: brandIconPath('png'),
+  });
   registerVaultProtocol();
   // A .env beside the app (dev) or in the user's home is a convenient way to
   // provide the key without pasting it into the UI.
