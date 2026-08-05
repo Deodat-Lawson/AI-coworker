@@ -31,6 +31,7 @@ import Sources from './Sources.js';
 export type SettingsPane =
   | 'account'
   | 'agent'
+  | 'brain'
   | 'availability'
   | 'notifications'
   | 'workspace'
@@ -42,19 +43,28 @@ export type SettingsPane =
   | 'appearance'
   | 'shortcuts';
 
+/**
+ * Three scopes, and the order matters: widest first.
+ *
+ * "Everywhere" is the installation — one relay, one model, one theme, however
+ * many agents or workspaces you have. "This agent" is yours and travels with
+ * you. "This workspace" belongs to a membership. A setting sits in exactly one
+ * of these, and the group heading is the promise about how far it reaches.
+ */
 const PANES: { key: SettingsPane; label: string; group: string }[] = [
-  { key: 'account', label: 'You', group: 'Your agent' },
-  { key: 'agent', label: 'Agent', group: 'Your agent' },
-  { key: 'availability', label: 'Availability', group: 'Your agent' },
-  { key: 'knowledge', label: 'Knowledge base', group: 'Your agent' },
-  { key: 'sources', label: 'Sources', group: 'Your agent' },
+  { key: 'brain', label: 'Brain', group: 'Everywhere' },
+  { key: 'network', label: 'Relay and network', group: 'Everywhere' },
+  { key: 'appearance', label: 'Appearance', group: 'Everywhere' },
+  { key: 'shortcuts', label: 'Shortcuts', group: 'Everywhere' },
+  { key: 'account', label: 'You', group: 'This agent' },
+  { key: 'agent', label: 'Instructions', group: 'This agent' },
+  { key: 'availability', label: 'Availability', group: 'This agent' },
+  { key: 'knowledge', label: 'Knowledge base', group: 'This agent' },
+  { key: 'sources', label: 'Sources', group: 'This agent' },
   { key: 'notifications', label: 'Notifications', group: 'This workspace' },
   { key: 'workspace', label: 'Workspace', group: 'This workspace' },
   { key: 'members', label: 'Members and invites', group: 'This workspace' },
   { key: 'channels', label: 'Channels', group: 'This workspace' },
-  { key: 'network', label: 'Network', group: 'App' },
-  { key: 'appearance', label: 'Appearance', group: 'App' },
-  { key: 'shortcuts', label: 'Shortcuts', group: 'App' },
 ];
 
 interface Props {
@@ -104,6 +114,7 @@ export default function Settings({
       <div className="settings-pane" key={workspace?.workspace.id ?? 'none'}>
         {pane === 'account' ? <AccountPane state={state} workspace={workspace} /> : null}
         {pane === 'agent' ? <AgentPane state={state} /> : null}
+        {pane === 'brain' ? <BrainPane state={state} /> : null}
         {pane === 'availability' ? <AvailabilityPane state={state} /> : null}
         {pane === 'notifications' ? (
           <NotificationsPane workspace={workspace} onOpenChannel={onOpenChannel} />
@@ -320,16 +331,14 @@ function AccountPane({ state, workspace }: { state: AppState; workspace: Workspa
 function AgentPane({ state }: { state: AppState }) {
   const profile = state.profile!;
   const [instructions, setInstructions] = useState(profile.agentInstructions);
-  const [apiKey, setApiKey] = useState('');
-  const [model, setModel] = useState(state.connection.model);
   const [note, save, busy] = useSaver();
-  const [brainNote, brainSave, brainBusy] = useSaver();
 
   return (
     <>
-      <h1>Agent</h1>
+      <h1>Instructions</h1>
       <p className="subtitle">
-        Your agent speaks for you in every room it enters. This is where you tell it how.
+        Your agent speaks for you in every room it enters. This is where you tell it how — and it
+        applies to your agent only. The model behind it is set once for the whole app, under Brain.
       </p>
 
       <h2>Standing instructions</h2>
@@ -354,8 +363,29 @@ function AgentPane({ state }: { state: AppState }) {
         </button>
         {note}
       </div>
+    </>
+  );
+}
 
-      <h2>Brain</h2>
+/**
+ * The brain is one setting for the whole installation, not one per agent: there
+ * is a single key and a single model behind every agent this copy of the app
+ * runs. It used to sit inside the agent's own page, which made a machine-wide
+ * key read as something personal to one agent.
+ */
+function BrainPane({ state }: { state: AppState }) {
+  const [apiKey, setApiKey] = useState('');
+  const [model, setModel] = useState(state.connection.model);
+  const [brainNote, brainSave, brainBusy] = useSaver();
+
+  return (
+    <>
+      <h1>Brain</h1>
+      <p className="subtitle">
+        The model every agent on this machine thinks with. One key, one model, however many
+        workspaces you are in.
+      </p>
+
       <div className="card">
         <p style={{ marginTop: 0 }}>
           <span className={`tag ${state.connection.providerLive ? 'good' : 'warn'}`}>

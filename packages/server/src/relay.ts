@@ -692,9 +692,10 @@ export class Relay extends EventEmitter {
     const meeting: Meeting = {
       id: id('mtg'),
       workspaceId,
-      // Every meeting lands in a channel: the one it was booked from, or the
-      // conversation these people already have.
-      channelId: this.hub.meetingChannel(
+      // Filled in below: the meeting needs an id before it can have a room.
+      channelId: undefined,
+      // Where it was booked from — the conversation these people already have.
+      originChannelId: this.hub.meetingChannel(
         workspaceId,
         request.organizer,
         request.participants,
@@ -712,6 +713,12 @@ export class Relay extends EventEmitter {
       status: 'scheduled',
       createdAt: Date.now(),
     };
+
+    // The room itself. A meeting is a channel, so make it one and let the
+    // meeting happen there rather than in the middle of somebody's #general.
+    meeting.channelId =
+      this.hub.openMeetingChannel(workspaceId, meeting, meeting.originChannelId) ??
+      meeting.originChannelId;
 
     const entry: ScheduledMeeting = { meeting, timer: null, room: null };
     this.meetings.set(meeting.id, entry);
@@ -734,9 +741,10 @@ export class Relay extends EventEmitter {
   }
 
   /**
-   * Meetings are workspace events, so they show up in the channel — and after
-   * the first one they show up *inside* it, as replies under the meeting's own
-   * message. Returns the id of the message that was written.
+   * Meetings are workspace events, so they are announced where the people are:
+   * the channel the meeting was booked from, one row per meeting, replies under
+   * it for everything after the booking. The meeting itself is not here — it is
+   * in its own channel. Returns the id of the message that was written.
    */
   private announceMeeting(
     entry: ScheduledMeeting,
@@ -746,7 +754,7 @@ export class Relay extends EventEmitter {
     const { meeting } = entry;
     const message = this.hub.postMeetingEvent(
       meeting.workspaceId,
-      meeting.channelId,
+      meeting.originChannelId,
       meeting.organizer,
       event,
       text,
@@ -756,14 +764,20 @@ export class Relay extends EventEmitter {
     return entry.rootMessageId ?? message?.id;
   }
 
-  /** Mirror one line of the room into the meeting's thread in the channel. */
+  /**
+   * One line of the room, said in the room. The meeting's channel is where the
+   * meeting happens, so a turn goes in as an ordinary message with no thread
+   * above it.
+   */
   private mirrorTurn(entry: ScheduledMeeting, turn: TranscriptEntry): void {
     const channelId = entry.meeting.channelId;
-    if (!channelId || !entry.rootMessageId) return;
+    if (!channelId) return;
     this.hub.postMeetingTurn(
       entry.meeting.workspaceId,
       channelId,
-      entry.rootMessageId,
+      // Only when the meeting failed to get a room of its own and is reporting
+      // into a channel it does not own.
+      channelId === entry.meeting.originChannelId ? entry.rootMessageId : undefined,
       entry.meeting.id,
       turn,
     );
@@ -791,6 +805,11 @@ export class Relay extends EventEmitter {
             ? `*${entry.meeting.title}* finished — ${finished.transcript.length} turns on the record.`
             : `*${entry.meeting.title}* ended early.`,
         );
+        // The room closes but stays readable: the meeting is its history, and
+        // an archived channel is exactly a room nobody is talking in any more.
+        if (entry.meeting.channelId && entry.meeting.channelId !== entry.meeting.originChannelId) {
+          this.hub.archiveMeetingChannel(entry.meeting.workspaceId, entry.meeting.channelId);
+        }
         this.options.onMeetingEnded?.(finished);
         this.emit('meeting.ended', finished);
       },

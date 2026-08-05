@@ -285,6 +285,12 @@ export interface Channel {
   members: AgentAddress[];
   /** #general: cannot be left, archived, or renamed. */
   isDefault: boolean;
+  /**
+   * Set when this channel is a meeting. The agents talk here and nowhere else,
+   * and it is archived once they are done — so the sidebar can keep meetings
+   * apart from the channels people chose to have.
+   */
+  meetingId?: string;
   lastMessageAt: number;
   messageCount: number;
   pinned: MessageId[];

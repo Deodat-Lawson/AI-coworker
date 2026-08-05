@@ -30,7 +30,10 @@ import type {
   WorkspaceState,
 } from '@ai-coworker/agent';
 import type {
+  BrainSettings,
   ChannelPrefs,
+  GlobalSettings,
+  GlobalSettingsPatch,
   Message,
   Presence,
   Profile,
@@ -236,6 +239,74 @@ function applyAppearance(): void {
 function defaultKnowledgeDir(): string {
   // Folder name kept from an earlier release so upgrades keep their data.
   return path.join(app.getPath('userData'), 'workspace');
+}
+
+/**
+ * Where the key came from, which is a different question from what it is. The
+ * renderer needs to know whether to keep asking; it never needs the key.
+ */
+function brainSettings(): BrainSettings {
+  return {
+    model: config.geminiModel ?? '',
+    hasApiKey: Boolean(resolveApiKey(config.geminiApiKey)),
+    apiKeySource: config.geminiApiKey ? 'settings' : resolveApiKey() ? 'environment' : 'none',
+  };
+}
+
+/** The installation's settings, assembled from the config on disk. */
+function buildGlobalSettings(): GlobalSettings {
+  return {
+    appearance: normalizeAppearance(config.appearance),
+    relayUrl: config.relayUrl ?? DEFAULT_RELAY,
+    relays: agent?.network.urls ?? [config.relayUrl ?? DEFAULT_RELAY],
+    knowledgeDir: config.knowledgeDir ?? null,
+    brain: brainSettings(),
+  };
+}
+
+/**
+ * Apply a change to the installation's settings. Every route that changes a
+ * global setting comes through here — the unified `settings:update` and the
+ * single-purpose handlers alike — so there is one implementation of what each
+ * setting *does*, and the narrow handlers are only doors onto it.
+ */
+async function applySettingsPatch(patch: GlobalSettingsPatch): Promise<GlobalSettings> {
+  if (patch.appearance !== undefined) {
+    config.appearance = normalizeAppearance(patch.appearance);
+    applyAppearance();
+  }
+  if (patch.knowledgeDir !== undefined) config.knowledgeDir = patch.knowledgeDir;
+  if (patch.brain) {
+    // An empty string is "forget the key I gave you", which is different from
+    // not mentioning the key at all.
+    if (patch.brain.apiKey !== undefined) {
+      config.geminiApiKey = patch.brain.apiKey.trim() || undefined;
+    }
+    if (patch.brain.model !== undefined) config.geminiModel = patch.brain.model.trim() || undefined;
+    applyBrain();
+  }
+  if (patch.relayUrl !== undefined && patch.relayUrl !== config.relayUrl) {
+    config.relayUrl = patch.relayUrl;
+    if (agent) {
+      agent.relay.close();
+      agent.relay.setUrl(patch.relayUrl);
+      agent.relay.connect();
+    }
+  }
+  await saveConfig();
+  pushState();
+  return buildGlobalSettings();
+}
+
+/** Swap the brain in place, without losing the knowledge base or the socket. */
+function applyBrain(): void {
+  if (!agent) return;
+  const { provider, reason } = createProvider({
+    apiKey: config.geminiApiKey,
+    model: config.geminiModel,
+  });
+  agent.provider = provider;
+  agent.providerReason = reason;
 }
 
 // --- sign-in state -----------------------------------------------------------
@@ -1098,14 +1169,19 @@ function registerIpc(): void {
     await requireKnowledge().removeCalendarBlock(id);
   });
 
+  // --- settings ---------------------------------------------------------------
+  // One way in and one way out for everything that belongs to the installation
+  // rather than to an agent. The single-purpose handlers below still exist —
+  // plenty of screens want to set exactly one thing — but they all land here.
+
+  handle<[], GlobalSettings>('settings:get', () => buildGlobalSettings());
+
+  handle<[GlobalSettingsPatch], GlobalSettings>('settings:update', (patch) =>
+    applySettingsPatch(patch),
+  );
+
   handle<[string], void>('relay:set', async (url) => {
-    config.relayUrl = url;
-    await saveConfig();
-    if (agent) {
-      agent.relay.close();
-      agent.relay.setUrl(url);
-      agent.relay.connect();
-    }
+    await applySettingsPatch({ relayUrl: url });
   });
 
   handle<[], void>('relay:reconnect', () => {
@@ -1115,24 +1191,12 @@ function registerIpc(): void {
   });
 
   handle<[Appearance], void>('appearance:set', async (appearance) => {
-    config.appearance = normalizeAppearance(appearance);
-    await saveConfig();
-    applyAppearance();
-    pushState();
+    await applySettingsPatch({ appearance });
   });
 
   // Changing the key swaps the brain without losing the knowledge base or the socket.
   handle<[{ apiKey?: string; model?: string }], void>('brain:set', async (input) => {
-    config.geminiApiKey = input.apiKey?.trim() || undefined;
-    config.geminiModel = input.model?.trim() || undefined;
-    await saveConfig();
-    if (!agent) return;
-    const { provider, reason } = createProvider({
-      apiKey: config.geminiApiKey,
-      model: config.geminiModel,
-    });
-    agent.provider = provider;
-    agent.providerReason = reason;
+    await applySettingsPatch({ brain: { apiKey: input.apiKey, model: input.model } });
   });
 
   handle<[], string | null>("knowledge:chooseDir", async () => {

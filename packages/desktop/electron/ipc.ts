@@ -12,6 +12,8 @@ import type {
   ChannelPrefs,
   ChannelReadState,
   Feedback,
+  GlobalSettings,
+  GlobalSettingsPatch,
   Invite,
   JoinRequest,
   Meeting,
@@ -315,6 +317,15 @@ export interface DesktopApi {
   reconnect(): Promise<IpcResult>;
   setBrain(input: { apiKey?: string; model?: string }): Promise<IpcResult>;
   setAppearance(appearance: Appearance): Promise<IpcResult>;
+
+  /**
+   * The installation's settings, whole. The single-purpose setters above are
+   * still here because most screens change exactly one thing, but this is the
+   * surface that says what "global" means — everything not tied to an agent or
+   * a workspace.
+   */
+  getSettings(): Promise<IpcResult<GlobalSettings>>;
+  updateSettings(patch: GlobalSettingsPatch): Promise<IpcResult<GlobalSettings>>;
   chooseKnowledgeDir(): Promise<IpcResult<string | null>>;
   openKnowledgeDir(): Promise<IpcResult>;
 

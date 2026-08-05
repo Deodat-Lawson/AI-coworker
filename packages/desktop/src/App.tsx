@@ -92,8 +92,8 @@ export default function App() {
   );
 
   /**
-   * Go to a meeting. A meeting is not a place of its own — it is a thread in a
-   * channel — so this opens that channel and puts the briefing beside it.
+   * Go to a meeting. A meeting is not a place of its own — it is a channel — so
+   * this opens that channel and puts the briefing beside it.
    */
   const openMeeting = useCallback(
     (meetingId: string | null) => {
@@ -111,6 +111,16 @@ export default function App() {
     },
     [state.live, state.meetings, state.activeChannelId],
   );
+
+  /**
+   * Going somewhere closes the search. Search is a view over one workspace, not
+   * a place you stay: leaving it for Activity and finding it still on top reads
+   * as the click having done nothing.
+   */
+  const goToSection = useCallback((next: Section) => {
+    setSection(next);
+    setSearching(false);
+  }, []);
 
   /** Every route into settings lands in the same place, on the right pane. */
   const openSettings = useCallback((pane: SettingsPane) => {
@@ -217,17 +227,17 @@ export default function App() {
       }
       if (mod && e.shiftKey && e.key.toLowerCase() === 'a') {
         e.preventDefault();
-        setSection('activity');
+        goToSection('activity');
         return;
       }
       if (mod && e.shiftKey && e.key.toLowerCase() === 't') {
         e.preventDefault();
-        setSection('threads');
+        goToSection('threads');
         return;
       }
       if (mod && e.shiftKey && e.key.toLowerCase() === 'd') {
         e.preventDefault();
-        setSection('agent');
+        goToSection('agent');
         return;
       }
       // ⌘⇧L cycles dark → light → match system. Stamping it here as well as in
@@ -243,7 +253,7 @@ export default function App() {
       // The vault owns ⌘, while you are in it — that is its own preferences.
       if (mod && e.key === ',' && section !== 'knowledge') {
         e.preventDefault();
-        setSection('settings');
+        goToSection('settings');
         return;
       }
       // ⌘N is "new note" inside the vault, the way it is in Obsidian.
@@ -287,6 +297,7 @@ export default function App() {
     workspace,
     switchWorkspace,
     openChannel,
+    goToSection,
     section,
   ]);
 
@@ -325,7 +336,7 @@ export default function App() {
           state={state}
           workspace={workspace}
           section={section}
-          onSection={setSection}
+          onSection={goToSection}
           onOpenChannel={(channelId) => workspace && openChannel(workspace.workspace.id, channelId)}
           onBrowseChannels={() => setDialog({ kind: 'browse-channels' })}
           onCreateChannel={() => setDialog({ kind: 'create-channel' })}
@@ -390,7 +401,7 @@ export default function App() {
               setPendingDm(address);
               void messagePerson(workspace.workspace.id, address);
             }}
-            onOpenKnowledge={() => setSection('knowledge')}
+            onOpenKnowledge={() => goToSection('knowledge')}
           />
         ) : section === 'chat' ? (
           <div className="panel">
