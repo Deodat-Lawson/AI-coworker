@@ -6,6 +6,7 @@ import { api, unwrap, type AppState } from '../lib/api.js';
 import { relative } from '../lib/format.js';
 import ObsidianView, { type ExtraView } from '../vault/ObsidianView.js';
 import { UiProvider } from '../vault/ui.js';
+import Sources from './Sources.js';
 
 interface Props {
   state: AppState;
@@ -15,6 +16,11 @@ interface Props {
  * Knowledge is the vault: a folder of markdown notes with links, tags, a graph
  * and a canvas over it. Projects, artifacts and tasks are structured records the
  * agent needs alongside the prose, and open as their own workspace views.
+ *
+ * Sources belongs here too. What the agent has read is part of what it knows —
+ * the connectors that bring memory in from the other agents on this machine,
+ * and the sharing rules that decide who ever hears it — so it lives beside the
+ * notes rather than off in a tab of its own.
  */
 export default function Knowledge({ state }: Props) {
   const extras = useMemo<ExtraView[]>(
@@ -22,6 +28,7 @@ export default function Knowledge({ state }: Props) {
       { id: 'projects', label: 'Projects', icon: '▣', render: () => <StructuredView state={state} kind="projects" /> },
       { id: 'artifacts', label: 'Artifacts', icon: '◈', render: () => <StructuredView state={state} kind="artifacts" /> },
       { id: 'tasks', label: 'Tasks', icon: '☑', render: () => <StructuredView state={state} kind="tasks" /> },
+      { id: 'sources', label: 'Sources', icon: '⇱', render: () => <Sources state={state} /> },
     ],
     [state],
   );

@@ -181,8 +181,17 @@ export interface Meeting {
   id: string;
   /** The workspace the meeting belongs to; its members are the ones who see it. */
   workspaceId: string;
-  /** Set when the meeting was booked from a channel, so it reports back there. */
+  /**
+   * The channel the meeting *is*: one made for it, which its turns fill and
+   * which archives itself when the meeting ends.
+   */
   channelId?: string;
+  /**
+   * Where it was booked from. The meeting does not happen here, but this is
+   * where the people are, so the booking and the outcome are announced here
+   * with a pointer to the room.
+   */
+  originChannelId?: string;
   title: string;
   purpose: string;
   kind: MeetingKind;

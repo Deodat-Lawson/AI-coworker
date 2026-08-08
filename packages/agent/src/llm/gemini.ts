@@ -261,7 +261,15 @@ export function describeGeminiError(err: unknown): string {
   }
   if (/\b40[13]\b/.test(message)) return 'the Gemini API key was rejected';
   if (/timed out/i.test(message)) return 'the Gemini request timed out';
+  // 5xx is the model being briefly unavailable, and its body is a JSON blob.
+  // Without this the raw blob ends up spoken aloud in a meeting transcript.
+  if (/\b5\d\d\b/.test(message) || /overloaded|unavailable/i.test(message)) {
+    return 'the model was briefly unavailable';
+  }
   const firstLine = message.split('\n')[0]!;
+  // Anything still unrecognised is an API string, not a sentence. Say the shape
+  // of the problem rather than pasting it where a human has to read it.
+  if (/^Gemini\b/.test(firstLine) || /[{}"]/.test(firstLine)) return 'the model call failed';
   return firstLine.length > 140 ? `${firstLine.slice(0, 137)}…` : firstLine;
 }
 
@@ -307,7 +315,10 @@ export class GeminiProvider implements LLMProvider {
     this.model = options.model ?? DEFAULT_MODEL;
     this.maxToolIterations = options.maxToolIterations ?? 8;
     this.timeoutMs = options.timeoutMs ?? 90_000;
-    this.maxRetries = options.maxRetries ?? 2;
+    // A lost turn is expensive — it is a hole in a meeting transcript that
+    // everyone else has to read around — and a 503 is the model being busy for
+    // a second, not a real failure. Worth several more tries than a normal call.
+    this.maxRetries = options.maxRetries ?? 4;
     this.maxRateLimitRetries = options.maxRateLimitRetries ?? 6;
     this.minIntervalMs = options.minIntervalMs ?? Number(process.env.GEMINI_MIN_INTERVAL_MS ?? 0);
     this.maxRateLimitWaitMs = options.maxRateLimitWaitMs ?? 90_000;

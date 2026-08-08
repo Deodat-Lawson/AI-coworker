@@ -69,9 +69,24 @@ export default function ChannelSidebar({
 
   const live = workspace.channels.filter((c) => !c.channel.archived);
   const joined = live.filter((c) => c.joined);
-  const starred = joined.filter((c) => c.prefs.starred);
-  const rooms = joined.filter((c) => !c.prefs.starred && !isDirect(c.channel));
+  const starred = joined.filter((c) => c.prefs.starred && !c.channel.meetingId);
+  // Meetings are channels, but they are not channels anybody chose to have —
+  // they arrive on their own and archive themselves — so they get their own
+  // group rather than pushing #general down the list.
+  const rooms = joined.filter(
+    (c) => !c.prefs.starred && !isDirect(c.channel) && !c.channel.meetingId,
+  );
   const dms = joined.filter((c) => !c.prefs.starred && isDirect(c.channel));
+  // An archived meeting is a finished one. Keep the last few readable, because
+  // the meeting is the only record of what the agents said.
+  const meetings = [...workspace.channels]
+    .filter((c) => c.channel.meetingId && (c.joined || !c.channel.archived))
+    .sort(
+      (a, b) =>
+        (b.channel.lastMessageAt || b.channel.createdAt) -
+        (a.channel.lastMessageAt || a.channel.createdAt),
+    )
+    .slice(0, 12);
   const mentions = state.activity.filter((a) => a.kind === 'mention').length;
   const threadCount = new Set(
     state.activity.filter((a) => a.kind === 'thread_reply').map((a) => a.message.threadRootId),
@@ -187,6 +202,25 @@ export default function ChannelSidebar({
           </button>
         </Group>
 
+        {meetings.length > 0 ? (
+          <Group
+            title="Meetings"
+            collapsed={collapsed.meetings}
+            onToggle={() => toggle('meetings')}
+          >
+            {meetings.map((c) => (
+              <ChannelRow
+                key={c.channel.id}
+                view={c}
+                active={section === 'chat' && c.channel.id === state.activeChannelId}
+                live={liveChannels.has(c.channel.id)}
+                done={c.channel.archived}
+                onClick={() => onOpenChannel(c.channel.id)}
+              />
+            ))}
+          </Group>
+        ) : null}
+
         <Group
           title="Direct messages"
           collapsed={collapsed.dms}
@@ -301,6 +335,7 @@ function ChannelRow({
   active,
   dm,
   live,
+  done,
   onClick,
 }: {
   view: ChannelView;
@@ -308,15 +343,23 @@ function ChannelRow({
   dm?: boolean;
   /** A meeting is running in this channel right now. */
   live?: boolean;
+  /** A meeting that has finished: still readable, no longer happening. */
+  done?: boolean;
   onClick: () => void;
 }) {
   const unread = view.read.unread > 0 && !active;
   const muted = view.prefs.muted;
   return (
     <button
-      className={`side-row ${active ? 'active' : ''} ${unread && !muted ? 'unread' : ''} ${muted ? 'muted' : ''}`}
+      className={`side-row ${active ? 'active' : ''} ${unread && !muted ? 'unread' : ''} ${muted || done ? 'muted' : ''}`}
       onClick={onClick}
-      title={live ? 'A meeting is happening in here' : view.channel.topic || view.label}
+      title={
+        live
+          ? 'A meeting is happening in here'
+          : done
+            ? 'This meeting has finished'
+            : view.channel.topic || view.label
+      }
     >
       <span className="side-icon">
         {dm ? (
@@ -330,6 +373,8 @@ function ChannelRow({
       <span className="side-label">{dm ? view.label : view.channel.name}</span>
       {live ? (
         <span className="side-badge live">live</span>
+      ) : done ? (
+        <span className="side-badge">✓</span>
       ) : view.read.mentions > 0 ? (
         <span className="side-badge mention">{view.read.mentions > 99 ? '99+' : view.read.mentions}</span>
       ) : unread && muted ? (

@@ -30,6 +30,8 @@ const api: DesktopApi = {
   reconnect: () => ipcRenderer.invoke('relay:reconnect'),
   setBrain: (input) => ipcRenderer.invoke('brain:set', input),
   setAppearance: (appearance) => ipcRenderer.invoke('appearance:set', appearance),
+  getSettings: () => ipcRenderer.invoke('settings:get'),
+  updateSettings: (patch) => ipcRenderer.invoke('settings:update', patch),
   chooseKnowledgeDir: () => ipcRenderer.invoke('knowledge:chooseDir'),
   openKnowledgeDir: () => ipcRenderer.invoke('knowledge:openDir'),
 

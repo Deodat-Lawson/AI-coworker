@@ -108,19 +108,20 @@ export default function Chat({
   };
 
   /**
-   * Open the room for a meeting — which is to say, its thread. The root is the
-   * message the relay wrote into this channel when the meeting was booked.
+   * Open the room for a meeting — which is to say, go to its channel. The
+   * meeting is a channel, so watching it is just reading one, full width, with
+   * no second way to render a conversation.
    */
   const openRoom = (meetingId: string) => {
-    const root = state.messages.find((m) => m.meetingId === meetingId && !m.threadRootId);
-    if (root) {
+    const room = workspace.channels.find((c) => c.channel.meetingId === meetingId);
+    if (room) {
       onOpenMeeting(null);
-      void guard(() => unwrap(api.openThread(workspace.workspace.id, channel.id, root.id)));
-    } else {
-      // Its row has scrolled out of the loaded history; the briefing still has
-      // everything your agent kept.
-      onOpenMeeting(meetingId);
+      onOpenChannel(room.channel.id);
+      return;
     }
+    // Older meetings ran before rooms were channels, or this one never got a
+    // room of its own. The briefing still has everything your agent kept.
+    onOpenMeeting(meetingId);
   };
 
   const actions: MessageListActions = {
@@ -140,8 +141,13 @@ export default function Chat({
   };
 
   // Rooms running in this channel right now. The banner is how you find out a
-  // meeting started without your agent having to interrupt you.
-  const liveHere = state.live.filter((room) => room.meeting.channelId === channel.id);
+  // meeting started without your agent having to interrupt you — so it shows
+  // both in the meeting's own channel and in the one it was booked from, which
+  // is where the people who care are actually sitting.
+  const liveHere = state.live.filter(
+    (room) =>
+      room.meeting.channelId === channel.id || room.meeting.originChannelId === channel.id,
+  );
   const pinned = state.messages.filter((m) => channel.pinned.includes(m.id));
   // Browsing a public channel you have not joined: read freely, but say so
   // rather than pretending you are part of it.
@@ -227,9 +233,11 @@ export default function Chat({
             <button className="ghost" onClick={() => onOpenMeeting(room.meeting.id)}>
               Briefing
             </button>
-            <button className="primary" onClick={() => openRoom(room.meeting.id)}>
-              Watch the room
-            </button>
+            {room.meeting.channelId === channel.id ? null : (
+              <button className="primary" onClick={() => openRoom(room.meeting.id)}>
+                Watch the room
+              </button>
+            )}
           </div>
         ))}
 

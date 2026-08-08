@@ -1526,6 +1526,7 @@ export class WorkspaceHub {
       members?: AgentAddress[];
       isDefault?: boolean;
       id?: ChannelId;
+      meetingId?: string;
     },
   ): ChannelRecord {
     const now = Date.now();
@@ -1542,6 +1543,7 @@ export class WorkspaceHub {
       archived: false,
       members: [...new Set(input.members ?? [])],
       isDefault: input.isDefault ?? false,
+      meetingId: input.meetingId,
       lastMessageAt: 0,
       messageCount: 0,
       pinned: [],
@@ -1991,26 +1993,27 @@ export class WorkspaceHub {
   }
 
   /**
-   * One turn of an agent meeting, written into the channel as a reply under the
-   * meeting's own message.
+   * One turn of an agent meeting, written into the meeting's channel as an
+   * ordinary message.
    *
-   * A meeting *is* a thread: the channel keeps one readable row per meeting,
-   * and opening that thread is watching the room. Turns never touch the unread
-   * badge — thread replies do not — so a thirty-turn meeting does not read as
-   * thirty things somebody needs to catch up on.
+   * A meeting *is* a channel, so a turn is just something said in it — no
+   * thread, no room, no second way to render a conversation. Pass `rootId` to
+   * hang turns under a message instead; that is how a meeting reports into a
+   * channel it does not own, where thirty turns should not read as thirty
+   * things to catch up on.
    */
   postMeetingTurn(
     workspaceId: WorkspaceId,
     channelId: ChannelId,
-    rootId: MessageId,
+    rootId: MessageId | undefined,
     meetingId: string,
     turn: TranscriptEntry,
   ): void {
     const record = this.workspaces.get(workspaceId);
     const entry = record?.channels.get(channelId);
     if (!record || !entry) return;
-    const root = entry.messages.find((m) => m.id === rootId);
-    if (!root) return;
+    const root = rootId ? entry.messages.find((m) => m.id === rootId) : undefined;
+    if (rootId && !root) return;
 
     const message: Message = {
       id: id('msg'),
@@ -2021,7 +2024,7 @@ export class WorkspaceHub {
       ts: turn.ts,
       kind: 'meeting',
       meetingId,
-      threadRootId: root.id,
+      threadRootId: root?.id,
       // The turn's own kind — question, assignment, commitment — so a reader
       // can see the shape of the meeting without reading every word of it.
       systemDetail: turn.kind,
@@ -2033,7 +2036,7 @@ export class WorkspaceHub {
       viaAgent: turn.speaker === 'moderator' ? undefined : true,
     };
     this.append(entry, message);
-    this.countReply(record, entry, root, message);
+    if (root) this.countReply(record, entry, root, message);
     this.fanOut(record, entry, message);
     this.save();
   }
@@ -2321,6 +2324,80 @@ export class WorkspaceHub {
 
     return [...record.channels.values()].find((c) => c.channel.isDefault && !c.channel.archived)
       ?.channel.id;
+  }
+
+  /**
+   * Make the channel a meeting happens in.
+   *
+   * A meeting is a room, and a room here is a channel — so it gets a real one,
+   * named after itself, holding its participants and nothing else. Its turns
+   * are ordinary messages in it, which is the whole point: reading a meeting is
+   * reading a channel, with no second way to render a conversation.
+   *
+   * Privacy is inherited rather than chosen. A meeting booked out of a private
+   * channel or a DM must not become a public record of what was said there, so
+   * the room is private unless the place it came from was public.
+   */
+  openMeetingChannel(
+    workspaceId: WorkspaceId,
+    meeting: { id: string; title: string; purpose: string; organizer: AgentAddress; participants: AgentAddress[] },
+    originChannelId?: ChannelId,
+  ): ChannelId | undefined {
+    const record = this.workspaces.get(workspaceId);
+    if (!record) return undefined;
+
+    const origin = originChannelId ? record.channels.get(originChannelId) : undefined;
+    const kind: Channel['kind'] = origin && origin.channel.kind !== 'public' ? 'private' : 'public';
+
+    // A title is free text and a channel name is not, so fall back rather than
+    // refusing to open the room over a name.
+    const validated = validateChannelName(meeting.title);
+    const base = validated.ok ? validated.name : 'meeting';
+    const taken = (name: string) =>
+      [...record.channels.values()].some(
+        (c) => c.channel.name === name && c.channel.kind !== 'dm' && c.channel.kind !== 'group_dm',
+      );
+    let name = base;
+    for (let n = 2; taken(name); n += 1) name = `${base}-${n}`;
+
+    const members = [
+      meeting.organizer,
+      ...meeting.participants.filter((a) => record.members.has(a)),
+    ];
+    const entry = this.createChannelRecord(record, {
+      name,
+      kind,
+      createdBy: meeting.organizer,
+      topic: meeting.purpose.slice(0, 250),
+      purpose: `Agent meeting: ${meeting.title}`.slice(0, 250),
+      members,
+      meetingId: meeting.id,
+    });
+    this.broadcast(
+      record,
+      { type: 'channel.upserted', workspaceId, channel: entry.channel },
+      this.audience(record, entry),
+    );
+    this.save();
+    return entry.channel.id;
+  }
+
+  /**
+   * Close the room. The channel stays readable — the meeting is its history —
+   * but it stops competing for attention in the sidebar.
+   */
+  archiveMeetingChannel(workspaceId: WorkspaceId, channelId: ChannelId): void {
+    const record = this.workspaces.get(workspaceId);
+    const entry = record?.channels.get(channelId);
+    if (!record || !entry || !entry.channel.meetingId) return;
+    entry.channel.archived = true;
+    entry.channel.updatedAt = Date.now();
+    this.broadcast(
+      record,
+      { type: 'channel.upserted', workspaceId, channel: entry.channel },
+      this.audience(record, entry),
+    );
+    this.save();
   }
 
   sharesWorkspace(workspaceId: WorkspaceId, addresses: AgentAddress[]): AgentAddress[] {
