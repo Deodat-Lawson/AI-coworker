@@ -27,6 +27,7 @@ import Chat from './views/Chat.js';
 import Knowledge from './views/Knowledge.js';
 import SearchPanel from './views/SearchPanel.js';
 import Settings, { type SettingsPane } from './views/Settings.js';
+import Tasks from './views/Tasks.js';
 
 type Dialog =
   | { kind: 'none' }
@@ -50,6 +51,7 @@ export default function App() {
   const [wsMenu, setWsMenu] = useState(false);
   const [searching, setSearching] = useState(false);
   const [demoSetup, setDemoSetup] = useState(false);
+  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   /** Workspaces whose agent has been introduced in this session. */
   const [metAgents, setMetAgents] = useState<string[]>([]);
 
@@ -66,10 +68,18 @@ export default function App() {
       setSection('chat');
       setSearching(false);
     });
+    // A task reminder that gets clicked should land on the task, not just on
+    // the app.
+    const offTask = api.onOpenTask(({ taskId }) => {
+      setOpenTaskId(taskId);
+      setSection('tasks');
+      setSearching(false);
+    });
     return () => {
       active = false;
       offState();
       offOpen();
+      offTask();
     };
   }, []);
 
@@ -217,7 +227,9 @@ export default function App() {
         e.target instanceof HTMLElement &&
         (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA');
 
-      if (mod && e.key.toLowerCase() === 'k') {
+      // Not `⌘⇧K` — that is the to-do list, and without the guard the switcher
+      // swallows it.
+      if (mod && !e.shiftKey && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setSwitcher(true);
         return;
@@ -248,6 +260,11 @@ export default function App() {
       if (mod && e.shiftKey && e.key.toLowerCase() === 'd') {
         e.preventDefault();
         goToSection('agent');
+        return;
+      }
+      if (mod && e.shiftKey && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        goToSection('tasks');
         return;
       }
       // ⌘⇧L cycles dark → light → match system. Stamping it here as well as in
@@ -374,7 +391,11 @@ export default function App() {
       </div>
 
       <main
-        className={section === 'knowledge' || section === 'settings' ? 'main is-full' : 'main'}
+        className={
+          section === 'knowledge' || section === 'settings' || section === 'tasks'
+            ? 'main is-full'
+            : 'main'
+        }
       >
         {searching && workspace ? (
           <SearchPanel
@@ -387,6 +408,16 @@ export default function App() {
           // The vault runs its own layout edge to edge; everything else sits in
           // the standard padded column.
           <Knowledge state={state} />
+        ) : section === 'tasks' ? (
+          // The to-do list belongs to you rather than to a workspace, so it does
+          // not wait for one.
+          <Tasks
+            state={state}
+            openTaskId={openTaskId}
+            onTaskOpened={() => setOpenTaskId(null)}
+            onOpenMeeting={openMeeting}
+            onOpenChannel={openChannel}
+          />
         ) : section === 'chat' && workspace ? (
           <Chat
             state={state}
@@ -403,6 +434,7 @@ export default function App() {
             workspace={workspace}
             onOpenMeeting={openMeeting}
             onOpenAccess={() => openSettings('agent')}
+            onOpenTasks={() => goToSection('tasks')}
           />
         ) : section === 'settings' ? (
           <Settings

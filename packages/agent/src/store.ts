@@ -33,6 +33,8 @@ import {
   type PublicProfile,
   type Presence,
   type Task,
+  type TaskList,
+  type TaskSection,
   type TranscriptEntry,
   type UserStatus,
   type Visibility,
@@ -41,6 +43,7 @@ import {
   type WorkspacePrefs,
   type FrontmatterValue,
   applyAgentPatch,
+  completeRecurring,
   defaultChannelPrefs,
   normalizeWorkspaceAgent,
   defaultWorkspacePrefs,
@@ -48,6 +51,10 @@ import {
   hashUnit,
   id,
   isMarkdown,
+  normalizeListColor,
+  normalizeTask,
+  orderForBottom,
+  orderForTop,
   parseNoteMeta,
   slugify,
   splitFrontmatter,
@@ -59,6 +66,9 @@ interface DbShape {
   projects: Project[];
   artifacts: Artifact[];
   tasks: Task[];
+  /** The to-do list's lists. Tasks with no list are in the Inbox. */
+  lists: TaskList[];
+  sections: TaskSection[];
   calendar: CalendarBlock[];
   feedback: Feedback[];
 }
@@ -74,6 +84,8 @@ function emptyDb(): DbShape {
     projects: [],
     artifacts: [],
     tasks: [],
+    lists: [],
+    sections: [],
     calendar: [],
     feedback: [],
   };
@@ -118,6 +130,11 @@ export interface ClientState {
    * runs headless too, and it has to be able to dial in without a window open.
    */
   sessions: Record<string, RelaySession>;
+  /**
+   * Reminders already raised, keyed by task and moment. Persisted because a
+   * notification you have seen must not come back every time the app restarts.
+   */
+  reminded: Record<string, number>;
 }
 
 export interface RelaySession {
@@ -141,6 +158,7 @@ function emptyClientState(): ClientState {
     status: emptyStatus(),
     presence: 'active',
     sessions: {},
+    reminded: {},
   };
 }
 
@@ -277,8 +295,14 @@ export class KnowledgeBase extends EventEmitter {
     db.projects ??= [];
     db.artifacts ??= [];
     db.tasks ??= [];
+    db.lists ??= [];
+    db.sections ??= [];
     db.calendar ??= [];
     db.feedback ??= [];
+    // Tasks predate the to-do list: the ones a meeting created before it existed
+    // carry no labels, no checklist and no position, and every screen from here
+    // down assumes they do.
+    db.tasks = db.tasks.map((task, index) => normalizeTask(task, index * 1000));
 
     const ws = new KnowledgeBase(root, profile, db);
     const client = await readJson<ClientState>(path.join(root, 'client.json'), emptyClientState());
@@ -287,6 +311,7 @@ export class KnowledgeBase extends EventEmitter {
     ws.clientState.drafts ??= {};
     ws.clientState.lastChannel ??= {};
     ws.clientState.relays ??= [];
+    ws.clientState.reminded ??= {};
     await ws.loadNotes();
     await ws.loadMeetings();
     if (seedProfile && !(await exists(profileFile))) await ws.saveProfile();
@@ -383,6 +408,29 @@ export class KnowledgeBase extends EventEmitter {
 
   get tasks(): Task[] {
     return [...this.db.tasks].sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  get taskLists(): TaskList[] {
+    return [...this.db.lists].sort((a, b) => a.order - b.order);
+  }
+
+  get taskSections(): TaskSection[] {
+    return [...this.db.sections].sort((a, b) => a.order - b.order);
+  }
+
+  task(taskId: string): Task | undefined {
+    return this.db.tasks.find((t) => t.id === taskId);
+  }
+
+  /** Resolve a list by id, then by exact name, then by a loose one. */
+  findTaskList(needle: string): TaskList | undefined {
+    if (!needle) return undefined;
+    const lower = needle.toLowerCase().trim();
+    return (
+      this.db.lists.find((l) => l.id === needle) ??
+      this.db.lists.find((l) => l.name.toLowerCase() === lower) ??
+      this.db.lists.find((l) => l.name.toLowerCase().includes(lower))
+    );
   }
 
   get calendar(): CalendarBlock[] {
@@ -524,16 +572,32 @@ export class KnowledgeBase extends EventEmitter {
     this.emit('change', 'artifacts');
   }
 
+  /**
+   * Create or change a task.
+   *
+   * `title` is required so a caller cannot accidentally create an untitled task,
+   * but a patch to an existing one leaves everything it does not mention alone.
+   * Finishing and reopening are handled here rather than by every caller, so
+   * `completedAt` cannot drift out of step with `status`.
+   */
   async upsertTask(input: Partial<Task> & { title: string }): Promise<Task> {
     const now = Date.now();
     const existing = input.id ? this.db.tasks.find((t) => t.id === input.id) : undefined;
     if (existing) {
+      const wasCompleted = existing.status === 'done' || existing.status === 'dropped';
       Object.assign(existing, input, { updatedAt: now });
+      const isCompleted = existing.status === 'done' || existing.status === 'dropped';
+      if (isCompleted && !wasCompleted) existing.completedAt = input.completedAt ?? now;
+      if (!isCompleted) existing.completedAt = undefined;
+      // Finishing a repeating task is never really finishing it, whichever
+      // route got here — a status pill, the agent, or a restored snapshot.
+      if (existing.status === 'done' && !wasCompleted) this.advanceIfRepeating(existing, now);
       await this.saveDb();
       this.emit('change', 'tasks');
       return existing;
     }
-    const task: Task = {
+    const completed = input.status === 'done' || input.status === 'dropped';
+    const task: Task = normalizeTask({
       id: input.id ?? id('task'),
       title: input.title,
       detail: input.detail ?? '',
@@ -546,17 +610,241 @@ export class KnowledgeBase extends EventEmitter {
       acceptanceCriteria: input.acceptanceCriteria ?? [],
       sourceMeetingId: input.sourceMeetingId,
       negotiationNote: input.negotiationNote,
-      createdAt: now,
+      listId: input.listId,
+      sectionId: input.sectionId,
+      labels: input.labels ?? [],
+      dueHasTime: input.dueHasTime,
+      remindAt: input.remindAt,
+      recurrence: input.recurrence,
+      subtasks: input.subtasks ?? [],
+      // New work goes to the top of its list, where you are already looking.
+      order: input.order ?? orderForTop(this.db.tasks.filter((t) => (t.listId ?? '') === (input.listId ?? ''))),
+      completedAt: completed ? (input.completedAt ?? now) : undefined,
+      source: input.source,
+      // Honoured rather than stamped, so undoing a delete puts the task back as
+      // it was rather than as a task created just now.
+      createdAt: input.createdAt ?? now,
       updatedAt: now,
-    };
+    });
     this.db.tasks.push(task);
     await this.saveDb();
     this.emit('change', 'tasks');
     return task;
   }
 
+  /**
+   * Tick a task off, or put it back.
+   *
+   * A repeating task does not finish when you tick it — it moves to its next
+   * date and stays open. That rule lives here so it holds however the task was
+   * completed: the checkbox, a keystroke, or the agent being asked to.
+   */
+  /**
+   * Move a repeating task to its next date in place. Returns true when it moved,
+   * false when it has no repeat or the series has run out and it really is done.
+   */
+  private advanceIfRepeating(task: Task, now: number): boolean {
+    if (!task.recurrence) return false;
+    const patch = completeRecurring(task, now);
+    if (!patch) return false;
+    Object.assign(task, patch, { updatedAt: now });
+    return true;
+  }
+
+  async completeTask(taskId: string, done = true): Promise<Task | undefined> {
+    const task = this.db.tasks.find((t) => t.id === taskId);
+    if (!task) return undefined;
+    const now = Date.now();
+
+    if (done && this.advanceIfRepeating(task, now)) {
+      await this.saveDb();
+      this.emit('change', 'tasks');
+      return task;
+    }
+
+    task.status = done ? 'done' : 'todo';
+    task.completedAt = done ? now : undefined;
+    task.updatedAt = now;
+    await this.saveDb();
+    this.emit('change', 'tasks');
+    return task;
+  }
+
+  /** Apply one patch to several tasks — what multi-select acts through. */
+  async updateTasks(taskIds: string[], patch: Partial<Task>): Promise<Task[]> {
+    const now = Date.now();
+    const touched: Task[] = [];
+    for (const taskId of taskIds) {
+      const task = this.db.tasks.find((t) => t.id === taskId);
+      if (!task) continue;
+      const wasCompleted = task.status === 'done' || task.status === 'dropped';
+      Object.assign(task, patch, { updatedAt: now });
+      const isCompleted = task.status === 'done' || task.status === 'dropped';
+      if (isCompleted && !wasCompleted) task.completedAt = now;
+      if (!isCompleted) task.completedAt = undefined;
+      if (task.status === 'done' && !wasCompleted) this.advanceIfRepeating(task, now);
+      touched.push(task);
+    }
+    if (!touched.length) return [];
+    await this.saveDb();
+    this.emit('change', 'tasks');
+    return touched;
+  }
+
+  /** Write the positions a drag produced. */
+  async reorderTasks(positions: { id: string; order: number }[]): Promise<void> {
+    if (!positions.length) return;
+    const now = Date.now();
+    for (const { id: taskId, order } of positions) {
+      const task = this.db.tasks.find((t) => t.id === taskId);
+      if (!task) continue;
+      task.order = order;
+      task.updatedAt = now;
+    }
+    await this.saveDb();
+    this.emit('change', 'tasks');
+  }
+
+  /**
+   * Put snapshots back exactly as they were, field for field.
+   *
+   * Deliberately a replacement rather than a patch: undo has to be able to
+   * *unset* something — a date you added, a list you filed it under — and a
+   * patch can only ever set. Anything the snapshot does not carry, the restored
+   * task does not have either.
+   */
+  async restoreTasks(snapshots: Task[]): Promise<Task[]> {
+    if (!snapshots.length) return [];
+    const now = Date.now();
+    const restored = snapshots.map((snapshot) => normalizeTask({ ...snapshot, updatedAt: now }));
+    for (const task of restored) {
+      const index = this.db.tasks.findIndex((t) => t.id === task.id);
+      if (index >= 0) this.db.tasks[index] = task;
+      else this.db.tasks.push(task);
+    }
+    await this.saveDb();
+    this.emit('change', 'tasks');
+    return restored;
+  }
+
+  /** The same, for lists — so undoing a deleted list brings the list back too. */
+  async restoreTaskLists(snapshots: TaskList[]): Promise<void> {
+    if (!snapshots.length) return;
+    for (const list of snapshots) {
+      const index = this.db.lists.findIndex((l) => l.id === list.id);
+      if (index >= 0) this.db.lists[index] = { ...list };
+      else this.db.lists.push({ ...list });
+    }
+    await this.saveDb();
+    this.emit('change', 'tasks');
+  }
+
   async deleteTask(taskId: string): Promise<void> {
-    this.db.tasks = this.db.tasks.filter((t) => t.id !== taskId);
+    await this.deleteTasks([taskId]);
+  }
+
+  async deleteTasks(taskIds: string[]): Promise<void> {
+    const doomed = new Set(taskIds);
+    const before = this.db.tasks.length;
+    this.db.tasks = this.db.tasks.filter((t) => !doomed.has(t.id));
+    if (this.db.tasks.length === before) return;
+    await this.saveDb();
+    this.emit('change', 'tasks');
+  }
+
+  // --- the to-do list's lists ----------------------------------------------
+
+  async upsertTaskList(input: Partial<TaskList> & { name: string }): Promise<TaskList> {
+    const now = Date.now();
+    const existing = input.id ? this.db.lists.find((l) => l.id === input.id) : undefined;
+    if (existing) {
+      Object.assign(existing, input, {
+        color: normalizeListColor(input.color ?? existing.color),
+        updatedAt: now,
+      });
+      await this.saveDb();
+      this.emit('change', 'tasks');
+      return existing;
+    }
+    const list: TaskList = {
+      id: input.id ?? id('list'),
+      name: input.name,
+      emoji: input.emoji ?? '',
+      color: normalizeListColor(input.color),
+      order: input.order ?? orderForBottom(this.db.lists),
+      archived: input.archived ?? false,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.db.lists.push(list);
+    await this.saveDb();
+    this.emit('change', 'tasks');
+    return list;
+  }
+
+  /**
+   * Delete a list. Its tasks go back to the Inbox unless the caller says to take
+   * them with it — losing work because a folder was tidied away is the one thing
+   * a to-do list must never do.
+   */
+  async deleteTaskList(listId: string, options: { deleteTasks?: boolean } = {}): Promise<void> {
+    this.db.lists = this.db.lists.filter((l) => l.id !== listId);
+    this.db.sections = this.db.sections.filter((s) => s.listId !== listId);
+    if (options.deleteTasks) {
+      this.db.tasks = this.db.tasks.filter((t) => t.listId !== listId);
+    } else {
+      for (const task of this.db.tasks) {
+        if (task.listId !== listId) continue;
+        task.listId = undefined;
+        task.sectionId = undefined;
+        task.updatedAt = Date.now();
+      }
+    }
+    await this.saveDb();
+    this.emit('change', 'tasks');
+  }
+
+  async reorderTaskLists(orderedIds: string[]): Promise<void> {
+    orderedIds.forEach((listId, index) => {
+      const list = this.db.lists.find((l) => l.id === listId);
+      if (list) list.order = (index + 1) * 1000;
+    });
+    await this.saveDb();
+    this.emit('change', 'tasks');
+  }
+
+  async upsertTaskSection(
+    input: Partial<TaskSection> & { listId: string; name: string },
+  ): Promise<TaskSection> {
+    const existing = input.id ? this.db.sections.find((s) => s.id === input.id) : undefined;
+    if (existing) {
+      Object.assign(existing, input);
+      await this.saveDb();
+      this.emit('change', 'tasks');
+      return existing;
+    }
+    const siblings = this.db.sections.filter((s) => s.listId === input.listId);
+    const section: TaskSection = {
+      id: input.id ?? id('sect'),
+      listId: input.listId,
+      name: input.name,
+      order: input.order ?? (siblings.length + 1) * 1000,
+      collapsed: input.collapsed,
+    };
+    this.db.sections.push(section);
+    await this.saveDb();
+    this.emit('change', 'tasks');
+    return section;
+  }
+
+  /** Removing a heading keeps its tasks, unfiled at the top of the list. */
+  async deleteTaskSection(sectionId: string): Promise<void> {
+    this.db.sections = this.db.sections.filter((s) => s.id !== sectionId);
+    for (const task of this.db.tasks) {
+      if (task.sectionId !== sectionId) continue;
+      task.sectionId = undefined;
+      task.updatedAt = Date.now();
+    }
     await this.saveDb();
     this.emit('change', 'tasks');
   }
@@ -660,6 +948,23 @@ export class KnowledgeBase extends EventEmitter {
     this.clientState.relays = [...new Set(urls.filter(Boolean))];
     await this.saveClient();
     this.emit('change', 'client');
+  }
+
+  /** Has this exact reminder already been raised, in this run or an earlier one? */
+  wasReminded(key: string): boolean {
+    return this.clientState.reminded[key] !== undefined;
+  }
+
+  /** Record reminders as raised, pruning ones too old to still matter. */
+  async markReminded(keys: string[]): Promise<void> {
+    if (!keys.length) return;
+    const now = Date.now();
+    for (const key of keys) this.clientState.reminded[key] = now;
+    const cutoff = now - 30 * 24 * 60 * 60_000;
+    for (const [key, at] of Object.entries(this.clientState.reminded)) {
+      if (at < cutoff) delete this.clientState.reminded[key];
+    }
+    await this.saveClient();
   }
 
   /** The session held on one relay, if the person has signed in to it. */

@@ -3,6 +3,7 @@ import { useCallback, useMemo, useState } from 'react';
 import {
   type SidebarChannel,
   type SidebarSection,
+  countTasks,
   isDirect,
   moveSection,
   newSection,
@@ -20,9 +21,11 @@ import { Icon, channelIcon, type IconName } from './icons.js';
 import { Avatar, ContextMenu, MenuLabel, MenuRow, MenuSeparator, Popover } from './ui.js';
 
 /**
- * The places you can be in this app. There are only six, and four of them are
- * conversations — that is the whole point. Meetings are not on this list
- * because a meeting is not a place: it happens in a channel, in a thread.
+ * The places you can be in this app. Most of them are conversations — that is
+ * the whole point. Meetings are not on this list because a meeting is not a
+ * place: it happens in a channel, in a thread. Tasks are, because the work that
+ * comes out of those conversations has to live somewhere you can look at
+ * without them.
  */
 export type Section =
   | 'chat'
@@ -30,6 +33,7 @@ export type Section =
   | 'threads'
   | 'agent'
   | 'agents'
+  | 'tasks'
   | 'knowledge'
   | 'settings';
 
@@ -87,6 +91,10 @@ export default function ChannelSidebar({
   const [renaming, setRenaming] = useState<string | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
 
+  // Tasks live in the knowledge base, not in a workspace, so the badge is right
+  // even before anybody has joined one.
+  const taskCounts = useMemo(() => countTasks(state.tasks), [state.tasks]);
+
   const workspaceId = workspace?.workspace.id ?? '';
   const stored = workspace?.prefs.sections;
   const density = workspace?.prefs.density ?? 'comfortable';
@@ -142,6 +150,30 @@ export default function ChannelSidebar({
           <div className="ws-name">No workspace</div>
         </div>
         <div className="sidebar-empty">Join or create a workspace to start talking to people.</div>
+        {/* Your to-do list is yours, not a workspace's — it works on day one. */}
+        <div className="side-group">
+          <SideItem
+            label="Tasks"
+            icon="check"
+            active={section === 'tasks'}
+            count={taskCounts.today}
+            hint="⌘⇧K"
+            onClick={() => onSection('tasks')}
+          />
+          <SideItem
+            label="Knowledge"
+            icon="knowledge"
+            active={section === 'knowledge'}
+            onClick={() => onSection('knowledge')}
+          />
+          <SideItem
+            label="Settings"
+            icon="settings"
+            active={section === 'settings'}
+            onClick={() => onSection('settings')}
+            hint="⌘,"
+          />
+        </div>
       </aside>
     );
   }
@@ -218,6 +250,18 @@ export default function ChannelSidebar({
           active={section === 'threads'}
           count={threadCount}
           onClick={() => onSection('threads')}
+        />
+        <SideItem
+          label="Tasks"
+          icon="check"
+          active={section === 'tasks'}
+          count={taskCounts.today}
+          // Late work is the one count that should read as a warning rather
+          // than as traffic.
+          accent={taskCounts.overdue > 0 ? `${taskCounts.overdue} late` : undefined}
+          tone="late"
+          hint="⌘⇧K"
+          onClick={() => onSection('tasks')}
         />
         <SideItem
           label={workspace.agent.name}
@@ -536,6 +580,7 @@ function SideItem({
   count,
   hint,
   accent,
+  tone = 'live',
   onClick,
 }: {
   label: string;
@@ -544,13 +589,15 @@ function SideItem({
   count?: number;
   hint?: string;
   accent?: string;
+  /** What the accent badge means: something happening, or something late. */
+  tone?: 'live' | 'late';
   onClick: () => void;
 }) {
   return (
     <button className={`side-row ${active ? 'active' : ''}`} onClick={onClick}>
       <Icon name={icon} size={17} className="side-icon" />
       <span className="side-label">{label}</span>
-      {accent ? <span className="side-badge live">{accent}</span> : null}
+      {accent ? <span className={`side-badge ${tone}`}>{accent}</span> : null}
       {count && !accent ? <span className="side-badge">{count > 99 ? '99+' : count}</span> : null}
       {hint && !count && !accent ? <span className="side-hint">{hint}</span> : null}
     </button>

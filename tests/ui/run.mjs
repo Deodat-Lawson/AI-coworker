@@ -6,8 +6,9 @@
  * and reads files back through the app's own IPC, so a pass means the bytes on
  * disk are right.
  *
- *   npm run test:ui            run everything
- *   npm run test:ui -- --keep  leave the temporary vault behind for inspection
+ *   npm run test:ui                 run everything
+ *   npm run test:ui -- --keep       leave the temporary vault behind for inspection
+ *   npm run test:ui -- --only task  run only the tests whose names contain "task"
  *
  * Not part of `npm test`: it needs a display, and CI for this repo has none.
  */
@@ -23,6 +24,8 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '../..');
 const desktopDir = path.join(repoRoot, 'packages/desktop');
 const keep = process.argv.includes('--keep');
+const only = process.argv[process.argv.indexOf('--only') + 1];
+const filter = process.argv.includes('--only') && only && !only.startsWith('--') ? only : '';
 
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -135,6 +138,13 @@ try {
   console.log(`relay: ${relay.url}`);
   console.log('launching the app…\n');
 
+  // The probe is handed to the renderer as a file, so a filter rides in as a
+  // line stitched on the front rather than as a second channel into the window.
+  const probeSource = await fs.readFile(path.join(here, 'probe.js'), 'utf8');
+  const probeFile = path.join(workspace, 'probe.js');
+  await fs.writeFile(probeFile, `window.__probeOnly = ${JSON.stringify(filter)};\n${probeSource}`, 'utf8');
+  if (filter) console.log(`only: tests matching "${filter}"\n`);
+
   const electron = (await import(path.join(repoRoot, 'node_modules/electron/index.js'))).default;
   // Give the run its own userData. `AI_COWORKER_WORKSPACE` moves the knowledge
   // base but not the app's settings, so without this the suite writes its own
@@ -152,7 +162,7 @@ try {
       ...process.env,
       AI_COWORKER_WORKSPACE: workspace,
       AI_COWORKER_RELAY: relay.url,
-      AI_COWORKER_PROBE: path.join(here, 'probe.js'),
+      AI_COWORKER_PROBE: probeFile,
       AI_COWORKER_PROBE_OUT: resultFile,
       AI_COWORKER_CAPTURE_DELAY: '2600',
       AI_COWORKER_PROBE_TIMEOUT: process.env.AI_COWORKER_PROBE_TIMEOUT ?? '300000',

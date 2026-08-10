@@ -45,6 +45,8 @@ export const emptyState: AppState = {
   notes: [],
   artifacts: [],
   tasks: [],
+  taskLists: [],
+  taskSections: [],
   calendar: [],
   feedback: [],
   meetings: [],
