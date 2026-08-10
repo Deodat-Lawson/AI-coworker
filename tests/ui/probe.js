@@ -1001,6 +1001,33 @@
       assert(painted > 500, `the graph actually drew something (painted ${painted} pixels)`);
     });
 
+    await test('the graph groups notes by colour and says what the colours mean', async () => {
+      // A graph drawn in one grey is a picture of how many notes you have and
+      // nothing else. Colour carries the grouping — by folder, by default — and
+      // the legend is what makes it readable rather than decorative, so the two
+      // are tested as the one feature they are.
+      await create('Grouped/In a folder.md', 'Links to [[Welcome]].\n');
+      await sleep(500);
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'g', metaKey: true, bubbles: true, cancelable: true }),
+      );
+      await waitFor(() => q('.graph-canvas'), 'the graph canvas');
+      const legend = await waitFor(() => q('.graph-legend'), 'the graph legend', 6000);
+      const swatches = qa('.graph-swatch', legend).map(
+        (el) => getComputedStyle(el).backgroundColor,
+      );
+      assert(swatches.length >= 2, `only ${swatches.length} groups in the legend`);
+      assert(
+        new Set(swatches).size === swatches.length,
+        `two groups share a colour: ${swatches.join(', ')}`,
+      );
+      const named = qa('.graph-legend-label', legend).map((el) => el.textContent.trim());
+      assert(
+        named.includes('Grouped'),
+        `the folder is not named in the legend: ${named.join(', ')}`,
+      );
+    });
+
     await test('a canvas file loads its nodes and edges', async () => {
       await create(
         'Probe Board.canvas',
@@ -1450,12 +1477,65 @@
         'settings has no pane for running the workspace',
       );
 
-      const elsewhere = byText('.settings-rail-item', 'Network');
+      // "Relay and network" — the pane was called "Network" when this was
+      // written. Matched on the lower-case half so a future rename of the
+      // leading word does not fail a test that is about walking away from the
+      // member table.
+      const elsewhere = byText('.settings-rail-item', 'network');
       assert(elsewhere, 'no other pane to move to');
       elsewhere.click();
       await sleep(300);
       assert(!q('.member-list'), 'leaving the pane left the member table behind');
       assert(q('.app'), 'the app shell survived');
+    });
+
+    await test('the window can be dragged, and nothing hides under the strip that drags it', async () => {
+      // The window has no title bar, so a `-webkit-app-region: drag` strip along
+      // the top is the only thing you can grab to move it. A drag region takes
+      // the mouse events in its own rectangle, which makes "keep the top band
+      // clear" a real constraint on every view rather than a style note — and
+      // the failure mode is silent: a button that simply stops responding.
+      const strip = q('.window-drag');
+      assert(strip, 'nothing to drag the window by');
+      const style = getComputedStyle(strip);
+      const region = style.webkitAppRegion || style.getPropertyValue('-webkit-app-region');
+      assert(region === 'drag', `the strip is not a drag region (${region})`);
+      const band = strip.getBoundingClientRect().height;
+      assert(band > 20, `the drag strip is only ${band}px tall`);
+      const stripZ = Number(style.zIndex);
+
+      const clickable =
+        'button, a[href], input, textarea, select, [role="button"], [contenteditable="true"]';
+      /** Anything deliberately lifted above the strip is free to sit up there. */
+      const liftedAbove = (el) => {
+        for (let node = el; node && node !== document.body; node = node.parentElement) {
+          const z = Number(getComputedStyle(node).zIndex);
+          if (Number.isFinite(z) && z > stripZ) return true;
+        }
+        return false;
+      };
+
+      const sections = ['Activity', 'Threads', 'Your agent', 'Agents', 'Knowledge', 'Settings'];
+      for (const name of sections) {
+        const item = qa('.side-row').find(
+          (row) => (q('.side-label', row) ?? row).textContent.trim() === name,
+        );
+        assert(item, `no way to reach ${name}`);
+        item.click();
+        await sleep(name === 'Knowledge' ? 1200 : 450);
+        const buried = qa(clickable)
+          .filter((el) => {
+            const box = el.getBoundingClientRect();
+            return box.width > 0 && box.height > 0 && box.top < band;
+          })
+          .filter((el) => !liftedAbove(el));
+        assert(
+          buried.length === 0,
+          `${name} puts ${buried.length} control(s) under the drag strip: ${buried
+            .map((el) => `${el.tagName.toLowerCase()}.${String(el.className).split(' ')[0]}`)
+            .join(', ')}`,
+        );
+      }
     });
 
     // -- appearance ---------------------------------------------------------

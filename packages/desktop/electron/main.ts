@@ -509,9 +509,20 @@ function reconcileView(a: PersonalAgent, kb: KnowledgeBase): void {
  * The probe is how the UI suite drives a real window: it runs against the same
  * preload API the app uses, so it can act on the interface and then read the
  * files back to see what actually landed on disk.
+ *
+ * `process.defaultApp` — not `app.isPackaged` — is what says "launched as
+ * `electron <path>`", which is the only way a run from source starts. Electron
+ * derives `isPackaged` from the *name of the executable*, so the moment the dev
+ * launcher rebrands the borrowed bundle to Stead (which is what puts our name
+ * under the Dock icon) every affordance below turns itself off, including the
+ * UI suite's probe, and does it silently.
  */
+function devRun(): boolean {
+  return Boolean(process.defaultApp);
+}
+
 function devOption(name: string): string | undefined {
-  return app.isPackaged ? undefined : process.env[name];
+  return devRun() ? process.env[name] : undefined;
 }
 
 async function runDevHooks(window: BrowserWindow): Promise<void> {
@@ -1605,7 +1616,7 @@ function createWindow(): void {
   });
 
   // Surface renderer errors in the terminal during development.
-  if (devUrl || !app.isPackaged) {
+  if (devUrl || devRun()) {
     mainWindow.webContents.on('console-message', (_event, level, message, line, source) => {
       if (level >= 2) console.error(`[renderer] ${message} (${source}:${line})`);
     });
