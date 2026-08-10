@@ -1,9 +1,24 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
-import { countTasks, isDirect, statusIsLive } from '@ai-coworker/shared';
+import {
+  type SidebarChannel,
+  type SidebarSection,
+  countTasks,
+  isDirect,
+  moveSection,
+  newSection,
+  normalizeSections,
+  placeChannel,
+  removeSection,
+  resolveSections,
+  statusIsLive,
+  unfileChannel,
+  updateSection,
+} from '@ai-coworker/shared';
 
-import type { AppState, ChannelView, WorkspaceView } from '../lib/api.js';
-import { Avatar, Popover } from './ui.js';
+import { api, type AppState, type ChannelView, type WorkspaceView } from '../lib/api.js';
+import { Icon, channelIcon, type IconName } from './icons.js';
+import { Avatar, ContextMenu, MenuLabel, MenuRow, MenuSeparator, Popover } from './ui.js';
 
 /**
  * The places you can be in this app. Most of them are conversations — that is
@@ -34,12 +49,25 @@ interface Props {
   onWorkspaceMenu: () => void;
   onStatus: () => void;
   onSearch: () => void;
+  onChannelDetails: (channelId: string) => void;
+}
+
+/** What the pointer is currently dragging, and what it is hovering over. */
+interface DragState {
+  channelId: string;
+  overSection: string | null;
+  overIndex: number | null;
 }
 
 /**
- * The channel list. Everything a person reaches for a hundred times a day, in
- * the order Slack taught everyone to expect: workspace name, jump/search,
- * activity, then channels and direct messages.
+ * The channel list — everything a person reaches for a hundred times a day.
+ *
+ * The order is the one Slack taught everyone to expect: workspace name, your
+ * own status, the jump/activity strip, then the channels. What is new is that
+ * *the person arranges it*: sections they name, channels they drag, an order
+ * they chose. That layout is stored as a diff from the default (see
+ * `resolveSections` in shared/sidebar.ts), so nothing is lost when a channel is
+ * created tomorrow and nobody has filed it yet.
  */
 export default function ChannelSidebar({
   state,
@@ -53,12 +81,67 @@ export default function ChannelSidebar({
   onWorkspaceMenu,
   onStatus,
   onSearch,
+  onChannelDetails,
 }: Props) {
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const toggle = (key: string) => setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
+  const [menu, setMenu] = useState<
+    | { kind: 'channel'; channelId: string; x: number; y: number }
+    | { kind: 'section'; sectionId: string; x: number; y: number }
+    | null
+  >(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [drag, setDrag] = useState<DragState | null>(null);
+
   // Tasks live in the knowledge base, not in a workspace, so the badge is right
   // even before anybody has joined one.
   const taskCounts = useMemo(() => countTasks(state.tasks), [state.tasks]);
+
+  const workspaceId = workspace?.workspace.id ?? '';
+  const stored = workspace?.prefs.sections;
+  const density = workspace?.prefs.density ?? 'comfortable';
+  const unreadOnly = workspace?.prefs.unreadOnly ?? false;
+
+  /** Persisting a layout is always "take the stored diff and change one bit". */
+  const saveSections = useCallback(
+    (next: SidebarSection[]) => {
+      if (!workspaceId) return;
+      void api.setWorkspacePrefs(workspaceId, { sections: next });
+    },
+    [workspaceId],
+  );
+
+  const rows = useMemo(() => {
+    const map = new Map<string, ChannelView>();
+    for (const view of workspace?.channels ?? []) map.set(view.channel.id, view);
+    return map;
+  }, [workspace?.channels]);
+
+  /**
+   * Two shapes of the same thing, and the difference matters.
+   *
+   * `layout` is what is *stored*: the diff from the default. Every edit is made
+   * against this. `sections` is what is *drawn*: the diff resolved against
+   * today's channels. Editing the resolved list instead would write every
+   * channel's current position back as an explicit choice — so the first time
+   * anybody collapsed a group, their whole sidebar would freeze and starring a
+   * channel would stop moving it.
+   */
+  const layout = useMemo(() => normalizeSections(stored), [stored]);
+
+  const sections = useMemo(() => {
+    const visible = (workspace?.channels ?? []).filter(
+      (c) => c.joined && (!c.channel.archived || Boolean(c.channel.meetingId)),
+    );
+    const sidebarChannels: SidebarChannel[] = visible.map((c) => ({
+      id: c.channel.id,
+      kind: c.channel.kind,
+      starred: c.prefs.starred,
+      isMeeting: Boolean(c.channel.meetingId),
+      archived: c.channel.archived,
+      lastMessageAt: c.channel.lastMessageAt || c.channel.createdAt,
+      name: isDirect(c.channel) ? c.label : c.channel.name,
+    }));
+    return resolveSections(stored, sidebarChannels);
+  }, [workspace?.channels, stored]);
 
   if (!workspace) {
     return (
@@ -66,14 +149,12 @@ export default function ChannelSidebar({
         <div className="ws-head">
           <div className="ws-name">No workspace</div>
         </div>
-        <div className="sidebar-empty">
-          Join or create a workspace to start talking to people.
-        </div>
+        <div className="sidebar-empty">Join or create a workspace to start talking to people.</div>
         {/* Your to-do list is yours, not a workspace's — it works on day one. */}
         <div className="side-group">
           <SideItem
             label="Tasks"
-            icon="✓"
+            icon="check"
             active={section === 'tasks'}
             count={taskCounts.today}
             hint="⌘⇧K"
@@ -81,13 +162,13 @@ export default function ChannelSidebar({
           />
           <SideItem
             label="Knowledge"
-            icon="▤"
+            icon="knowledge"
             active={section === 'knowledge'}
             onClick={() => onSection('knowledge')}
           />
           <SideItem
             label="Settings"
-            icon="⚙"
+            icon="settings"
             active={section === 'settings'}
             onClick={() => onSection('settings')}
             hint="⌘,"
@@ -97,41 +178,32 @@ export default function ChannelSidebar({
     );
   }
 
-  const live = workspace.channels.filter((c) => !c.channel.archived);
-  const joined = live.filter((c) => c.joined);
-  const starred = joined.filter((c) => c.prefs.starred && !c.channel.meetingId);
-  // Meetings are channels, but they are not channels anybody chose to have —
-  // they arrive on their own and archive themselves — so they get their own
-  // group rather than pushing #general down the list.
-  const rooms = joined.filter(
-    (c) => !c.prefs.starred && !isDirect(c.channel) && !c.channel.meetingId,
-  );
-  const dms = joined.filter((c) => !c.prefs.starred && isDirect(c.channel));
-  // An archived meeting is a finished one. Keep the last few readable, because
-  // the meeting is the only record of what the agents said.
-  const meetings = [...workspace.channels]
-    .filter((c) => c.channel.meetingId && (c.joined || !c.channel.archived))
-    .sort(
-      (a, b) =>
-        (b.channel.lastMessageAt || b.channel.createdAt) -
-        (a.channel.lastMessageAt || a.channel.createdAt),
-    )
-    .slice(0, 12);
   const mentions = state.activity.filter((a) => a.kind === 'mention').length;
   const threadCount = new Set(
     state.activity.filter((a) => a.kind === 'thread_reply').map((a) => a.message.threadRootId),
   ).size;
-  // Channels with a room running in them right now, so the sidebar can say so.
   const liveChannels = new Set(
     state.live.map((room) => room.meeting.channelId).filter((id): id is string => Boolean(id)),
   );
 
+  const closeMenu = () => setMenu(null);
+
+  const onDrop = (sectionId: string, index: number) => {
+    if (!drag) return;
+    saveSections(placeChannel(layout, drag.channelId, sectionId, index));
+    setDrag(null);
+  };
+
+  const menuChannel = menu?.kind === 'channel' ? rows.get(menu.channelId) : undefined;
+  const menuSection = menu?.kind === 'section' ? sections.find((s) => s.id === menu.sectionId) : undefined;
+
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar density-${density}`}>
       <button className="ws-head" onClick={onWorkspaceMenu} title="Workspace menu">
         <div className="ws-name">
-          {workspace.workspace.name}
-          <span className="ws-caret">▾</span>
+          <WorkspaceGlyph workspace={workspace} />
+          <span className="ws-name-text">{workspace.workspace.name}</span>
+          <Icon name="chevron-down" size={14} className="ws-caret" />
         </div>
         <div className="ws-sub">
           <span className={`dot ${workspace.connection}`} />
@@ -149,6 +221,7 @@ export default function ChannelSidebar({
           address={workspace.me.address}
           size={26}
           presence={state.presence}
+          image={workspace.me.avatar}
         />
         <span className="you-text">
           {statusIsLive(state.status) ? (
@@ -163,29 +236,24 @@ export default function ChannelSidebar({
       </button>
 
       <div className="side-group">
-        <SideItem
-          label="Search"
-          icon="⌕"
-          onClick={onSearch}
-          hint="⌘F"
-        />
+        <SideItem label="Search" icon="search" onClick={onSearch} hint="⌘F" />
         <SideItem
           label="Activity"
-          icon="✳"
+          icon="activity"
           active={section === 'activity'}
           count={mentions}
           onClick={() => onSection('activity')}
         />
         <SideItem
           label="Threads"
-          icon="❑"
+          icon="threads"
           active={section === 'threads'}
           count={threadCount}
           onClick={() => onSection('threads')}
         />
         <SideItem
           label="Tasks"
-          icon="✓"
+          icon="check"
           active={section === 'tasks'}
           count={taskCounts.today}
           // Late work is the one count that should read as a warning rather
@@ -196,150 +264,311 @@ export default function ChannelSidebar({
           onClick={() => onSection('tasks')}
         />
         <SideItem
-          label="Your agent"
-          icon="◆"
+          label={workspace.agent.name}
+          icon="agent"
           active={section === 'agent'}
           onClick={() => onSection('agent')}
           accent={state.live.length > 0 ? 'live' : undefined}
         />
       </div>
 
-      <div className="side-scroll">
-        {starred.length > 0 ? (
-          <Group
-            title="Starred"
-            collapsed={collapsed.starred}
-            onToggle={() => toggle('starred')}
-          >
-            {starred.map((c) => (
-              <ChannelRow
-                key={c.channel.id}
-                view={c}
-                active={section === 'chat' && c.channel.id === state.activeChannelId}
-                live={liveChannels.has(c.channel.id)}
-                onClick={() => onOpenChannel(c.channel.id)}
-              />
-            ))}
-          </Group>
-        ) : null}
+      <div className="side-scroll" onDragEnd={() => setDrag(null)}>
+        {sections.map((group) => (
+          <SectionGroup
+            key={group.id}
+            group={group}
+            rows={rows}
+            state={state}
+            section={section}
+            liveChannels={liveChannels}
+            unreadOnly={unreadOnly}
+            drag={drag}
+            renaming={renaming === group.id}
+            onRenamed={(name) => {
+              setRenaming(null);
+              if (name) saveSections(updateSection(layout, group.id, { name }));
+            }}
+            onToggle={() => saveSections(updateSection(layout, group.id, { collapsed: !group.collapsed }))}
+            onOpenChannel={onOpenChannel}
+            onChannelMenu={(channelId, x, y) => setMenu({ kind: 'channel', channelId, x, y })}
+            onSectionMenu={(x, y) => setMenu({ kind: 'section', sectionId: group.id, x, y })}
+            onDragChannel={(channelId) => setDrag({ channelId, overSection: null, overIndex: null })}
+            onDragOver={(overIndex) =>
+              setDrag((prev) => (prev ? { ...prev, overSection: group.id, overIndex } : prev))
+            }
+            onDrop={(index) => onDrop(group.id, index)}
+            onAdd={
+              group.builtin === 'dms'
+                ? onNewDm
+                : group.builtin === 'channels'
+                  ? onBrowseChannels
+                  : undefined
+            }
+          />
+        ))}
 
-        <Group
-          title="Channels"
-          collapsed={collapsed.channels}
-          onToggle={() => toggle('channels')}
-          action={{ label: 'Browse or create a channel', onClick: onBrowseChannels }}
-        >
-          {rooms.map((c) => (
-            <ChannelRow
-              key={c.channel.id}
-              view={c}
-              active={section === 'chat' && c.channel.id === state.activeChannelId}
-              live={liveChannels.has(c.channel.id)}
-              onClick={() => onOpenChannel(c.channel.id)}
-            />
-          ))}
-          <button className="side-row muted" onClick={onCreateChannel}>
-            <span className="side-icon">+</span>
-            <span className="side-label">Add channel</span>
-          </button>
-        </Group>
-
-        {meetings.length > 0 ? (
-          <Group
-            title="Meetings"
-            collapsed={collapsed.meetings}
-            onToggle={() => toggle('meetings')}
-          >
-            {meetings.map((c) => (
-              <ChannelRow
-                key={c.channel.id}
-                view={c}
-                active={section === 'chat' && c.channel.id === state.activeChannelId}
-                live={liveChannels.has(c.channel.id)}
-                done={c.channel.archived}
-                onClick={() => onOpenChannel(c.channel.id)}
-              />
-            ))}
-          </Group>
-        ) : null}
-
-        <Group
-          title="Direct messages"
-          collapsed={collapsed.dms}
-          onToggle={() => toggle('dms')}
-          action={{ label: 'New message', onClick: onNewDm }}
-        >
-          {dms.map((c) => (
-            <ChannelRow
-              key={c.channel.id}
-              view={c}
-              active={section === 'chat' && c.channel.id === state.activeChannelId}
-              live={liveChannels.has(c.channel.id)}
-              onClick={() => onOpenChannel(c.channel.id)}
-              dm
-            />
-          ))}
-          {dms.length === 0 ? (
-            <button className="side-row muted" onClick={onNewDm}>
-              <span className="side-icon">+</span>
-              <span className="side-label">Message someone</span>
-            </button>
-          ) : null}
-        </Group>
+        <button className="side-row muted new-section" onClick={() => {
+          const created = newSection({ name: 'New section' });
+          saveSections([...layout, created]);
+          setRenaming(created.id);
+        }}>
+          <Icon name="plus" size={15} className="side-icon" />
+          <span className="side-label">New section</span>
+        </button>
       </div>
 
       <div className="side-foot">
         <SideItem
-          label="Agents"
-          icon="◇"
+          label="People"
+          icon="people"
           active={section === 'agents'}
           onClick={() => onSection('agents')}
         />
         <SideItem
           label="Knowledge"
-          icon="▤"
+          icon="knowledge"
           active={section === 'knowledge'}
           onClick={() => onSection('knowledge')}
         />
         <SideItem
           label="Settings"
-          icon="⚙"
+          icon="settings"
           active={section === 'settings'}
           onClick={() => onSection('settings')}
           hint="⌘,"
         />
       </div>
+
+      {menu && menuChannel ? (
+        <ContextMenu x={menu.x} y={menu.y} onClose={closeMenu}>
+          <ChannelMenu
+            view={menuChannel}
+            workspaceId={workspaceId}
+            sections={sections}
+            onClose={closeMenu}
+            onDetails={() => onChannelDetails(menuChannel.channel.id)}
+            onMove={(sectionId) => saveSections(placeChannel(layout, menuChannel.channel.id, sectionId))}
+            onUnfile={() => saveSections(unfileChannel(layout, menuChannel.channel.id))}
+          />
+        </ContextMenu>
+      ) : null}
+
+      {menu && menuSection ? (
+        <ContextMenu x={menu.x} y={menu.y} onClose={closeMenu}>
+          <MenuLabel>{menuSection.name}</MenuLabel>
+          <MenuRow
+            icon="edit"
+            label="Rename section"
+            onClick={() => {
+              setRenaming(menuSection.id);
+              closeMenu();
+            }}
+          />
+          <MenuRow
+            icon={menuSection.collapsed ? 'chevron-down' : 'chevron-right'}
+            label={menuSection.collapsed ? 'Expand' : 'Collapse'}
+            onClick={() => {
+              saveSections(updateSection(layout, menuSection.id, { collapsed: !menuSection.collapsed }));
+              closeMenu();
+            }}
+          />
+          <MenuRow
+            icon="bell-off"
+            label="Show only unread"
+            checked={menuSection.unreadOnly}
+            onClick={() => {
+              saveSections(updateSection(layout, menuSection.id, { unreadOnly: !menuSection.unreadOnly }));
+              closeMenu();
+            }}
+          />
+          <MenuSeparator />
+          <MenuRow
+            icon="chevron-up"
+            label="Move up"
+            onClick={() => {
+              const at = layout.findIndex((s) => s.id === menuSection.id);
+              saveSections(moveSection(layout, menuSection.id, Math.max(0, at - 1)));
+              closeMenu();
+            }}
+          />
+          <MenuRow
+            icon="chevron-down"
+            label="Move down"
+            onClick={() => {
+              const at = layout.findIndex((s) => s.id === menuSection.id);
+              saveSections(moveSection(layout, menuSection.id, at + 1));
+              closeMenu();
+            }}
+          />
+          {!menuSection.builtin ? (
+            <>
+              <MenuSeparator />
+              <MenuRow
+                icon="trash"
+                label="Delete section"
+                danger
+                onClick={() => {
+                  saveSections(removeSection(layout, menuSection.id));
+                  closeMenu();
+                }}
+              />
+            </>
+          ) : null}
+        </ContextMenu>
+      ) : null}
     </aside>
   );
 }
 
-function Group({
-  title,
-  collapsed,
+/** The workspace's uploaded icon, its emoji, or its initial — in that order. */
+function WorkspaceGlyph({ workspace }: { workspace: WorkspaceView }) {
+  const w = workspace.workspace;
+  if (w.iconImage) return <img className="ws-glyph-img" src={w.iconImage} alt="" />;
+  return <span className="ws-glyph">{w.icon || w.name.slice(0, 1).toUpperCase()}</span>;
+}
+
+// ---------------------------------------------------------------------------
+// One section
+// ---------------------------------------------------------------------------
+
+function SectionGroup({
+  group,
+  rows,
+  state,
+  section,
+  liveChannels,
+  unreadOnly,
+  drag,
+  renaming,
+  onRenamed,
   onToggle,
-  action,
-  children,
+  onOpenChannel,
+  onChannelMenu,
+  onSectionMenu,
+  onDragChannel,
+  onDragOver,
+  onDrop,
+  onAdd,
 }: {
-  title: string;
-  collapsed?: boolean;
+  group: SidebarSection;
+  rows: Map<string, ChannelView>;
+  state: AppState;
+  section: Section;
+  liveChannels: Set<string>;
+  unreadOnly: boolean;
+  drag: DragState | null;
+  renaming: boolean;
+  onRenamed: (name: string | null) => void;
   onToggle: () => void;
-  action?: { label: string; onClick: () => void };
-  children: React.ReactNode;
+  onOpenChannel: (channelId: string) => void;
+  onChannelMenu: (channelId: string, x: number, y: number) => void;
+  onSectionMenu: (x: number, y: number) => void;
+  onDragChannel: (channelId: string) => void;
+  onDragOver: (index: number) => void;
+  onDrop: (index: number) => void;
+  onAdd?: () => void;
 }) {
+  const [draftName, setDraftName] = useState(group.name);
+
+  const hideRead = unreadOnly || group.unreadOnly;
+  const visible = group.channels
+    .map((id) => rows.get(id))
+    .filter((view): view is ChannelView => Boolean(view))
+    .filter((view) => {
+      if (!hideRead) return true;
+      // The channel you are reading never vanishes out from under you.
+      if (view.channel.id === state.activeChannelId) return true;
+      return view.read.unread > 0;
+    });
+
+  // A dragged channel needs somewhere to land even when the group it is over is
+  // empty or entirely read, so a group being dragged over always draws.
+  const isDropTarget = drag?.overSection === group.id;
+  if (!visible.length && !isDropTarget && group.builtin) return null;
+
   return (
-    <div className="side-group">
-      <div className="side-group-head">
-        <button className="side-group-title" onClick={onToggle}>
-          <span className={`chevron ${collapsed ? 'closed' : ''}`}>▾</span>
-          {title}
-        </button>
-        {action ? (
-          <button className="side-group-action" title={action.label} onClick={action.onClick}>
-            +
+    <div
+      className={`side-group ${isDropTarget ? 'drop-target' : ''}`}
+      onDragOver={(e) => {
+        if (!drag) return;
+        e.preventDefault();
+        onDragOver(visible.length);
+      }}
+      onDrop={(e) => {
+        if (!drag) return;
+        e.preventDefault();
+        onDrop(drag.overIndex ?? visible.length);
+      }}
+    >
+      <div className="side-group-head" onContextMenu={(e) => {
+        e.preventDefault();
+        onSectionMenu(e.clientX, e.clientY);
+      }}>
+        {renaming ? (
+          <input
+            className="side-rename"
+            autoFocus
+            value={draftName}
+            onChange={(e) => setDraftName(e.target.value)}
+            onBlur={() => onRenamed(draftName.trim() || null)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') onRenamed(draftName.trim() || null);
+              if (e.key === 'Escape') onRenamed(null);
+            }}
+          />
+        ) : (
+          <button className="side-group-title" onClick={onToggle}>
+            <Icon
+              name={group.collapsed ? 'chevron-right' : 'chevron-down'}
+              size={13}
+              className="chevron"
+            />
+            <span className="side-group-emoji">{group.emoji}</span>
+            {group.name}
+            {group.collapsed && visible.length ? (
+              <span className="side-group-count">{visible.length}</span>
+            ) : null}
           </button>
-        ) : null}
+        )}
+        <div className="side-group-actions">
+          {onAdd ? (
+            <button className="side-group-action" title="Add" onClick={onAdd}>
+              <Icon name="plus" size={14} />
+            </button>
+          ) : null}
+          <button
+            className="side-group-action"
+            title="Section options"
+            onClick={(e) => onSectionMenu(e.clientX, e.clientY)}
+          >
+            <Icon name="more" size={14} />
+          </button>
+        </div>
       </div>
-      {collapsed ? null : children}
+
+      {group.collapsed
+        ? null
+        : visible.map((view, i) => (
+            <ChannelRow
+              key={view.channel.id}
+              view={view}
+              active={section === 'chat' && view.channel.id === state.activeChannelId}
+              live={liveChannels.has(view.channel.id)}
+              done={view.channel.archived}
+              dragging={drag?.channelId === view.channel.id}
+              dropBefore={isDropTarget && drag?.overIndex === i}
+              onClick={() => onOpenChannel(view.channel.id)}
+              onMenu={(x, y) => onChannelMenu(view.channel.id, x, y)}
+              onDragStart={() => onDragChannel(view.channel.id)}
+              onDragOver={() => onDragOver(i)}
+            />
+          ))}
+
+      {!group.collapsed && !visible.length ? (
+        <div className="side-empty">
+          {group.builtin ? 'Nothing here yet.' : 'Drag channels in here.'}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -355,7 +584,7 @@ function SideItem({
   onClick,
 }: {
   label: string;
-  icon: string;
+  icon: IconName;
   active?: boolean;
   count?: number;
   hint?: string;
@@ -366,7 +595,7 @@ function SideItem({
 }) {
   return (
     <button className={`side-row ${active ? 'active' : ''}`} onClick={onClick}>
-      <span className="side-icon">{icon}</span>
+      <Icon name={icon} size={17} className="side-icon" />
       <span className="side-label">{label}</span>
       {accent ? <span className={`side-badge ${tone}`}>{accent}</span> : null}
       {count && !accent ? <span className="side-badge">{count > 99 ? '99+' : count}</span> : null}
@@ -378,26 +607,59 @@ function SideItem({
 function ChannelRow({
   view,
   active,
-  dm,
   live,
   done,
+  dragging,
+  dropBefore,
   onClick,
+  onMenu,
+  onDragStart,
+  onDragOver,
 }: {
   view: ChannelView;
   active: boolean;
-  dm?: boolean;
   /** A meeting is running in this channel right now. */
   live?: boolean;
   /** A meeting that has finished: still readable, no longer happening. */
   done?: boolean;
+  dragging?: boolean;
+  dropBefore?: boolean;
   onClick: () => void;
+  onMenu: (x: number, y: number) => void;
+  onDragStart: () => void;
+  onDragOver: () => void;
 }) {
+  const dm = isDirect(view.channel);
   const unread = view.read.unread > 0 && !active;
   const muted = view.prefs.muted;
+
   return (
     <button
-      className={`side-row ${active ? 'active' : ''} ${unread && !muted ? 'unread' : ''} ${muted || done ? 'muted' : ''}`}
+      className={[
+        'side-row',
+        active ? 'active' : '',
+        unread && !muted ? 'unread' : '',
+        muted || done ? 'muted' : '',
+        dragging ? 'dragging' : '',
+        dropBefore ? 'drop-before' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', view.channel.id);
+        onDragStart();
+      }}
+      onDragOver={(e) => {
+        e.preventDefault();
+        onDragOver();
+      }}
       onClick={onClick}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onMenu(e.clientX, e.clientY);
+      }}
       title={
         live
           ? 'A meeting is happening in here'
@@ -406,26 +668,105 @@ function ChannelRow({
             : view.channel.topic || view.label
       }
     >
-      <span className="side-icon">
-        {dm ? (
+      {dm ? (
+        <span className="side-icon">
           <span className={`presence-dot ${view.presence ?? 'offline'}`} />
-        ) : view.channel.kind === 'private' ? (
-          '🔒'
-        ) : (
-          '#'
-        )}
-      </span>
+        </span>
+      ) : (
+        <Icon
+          name={channelIcon(view.channel.kind, Boolean(view.channel.meetingId))}
+          size={16}
+          className="side-icon"
+        />
+      )}
       <span className="side-label">{dm ? view.label : view.channel.name}</span>
+      {view.prefs.starred ? <Icon name="star-filled" size={11} className="side-star" /> : null}
       {live ? (
         <span className="side-badge live">live</span>
       ) : done ? (
-        <span className="side-badge">✓</span>
+        <Icon name="check" size={13} className="side-done" />
       ) : view.read.mentions > 0 ? (
-        <span className="side-badge mention">{view.read.mentions > 99 ? '99+' : view.read.mentions}</span>
+        <span className="side-badge mention">
+          {view.read.mentions > 99 ? '99+' : view.read.mentions}
+        </span>
       ) : unread && muted ? (
         <span className="side-badge">{view.read.unread}</span>
       ) : null}
     </button>
+  );
+}
+
+/** Right-clicking a channel: everything you can do to it, without leaving it. */
+function ChannelMenu({
+  view,
+  workspaceId,
+  sections,
+  onClose,
+  onDetails,
+  onMove,
+  onUnfile,
+}: {
+  view: ChannelView;
+  workspaceId: string;
+  sections: SidebarSection[];
+  onClose: () => void;
+  onDetails: () => void;
+  onMove: (sectionId: string) => void;
+  onUnfile: () => void;
+}) {
+  const [moving, setMoving] = useState(false);
+  const id = view.channel.id;
+  const act = (work: () => void) => {
+    work();
+    onClose();
+  };
+
+  if (moving) {
+    return (
+      <>
+        <MenuLabel>Move to section</MenuLabel>
+        {sections.map((s) => (
+          <MenuRow key={s.id} label={`${s.emoji}  ${s.name}`} onClick={() => act(() => onMove(s.id))} />
+        ))}
+        <MenuSeparator />
+        <MenuRow icon="refresh" label="Let it sort itself" onClick={() => act(onUnfile)} />
+      </>
+    );
+  }
+
+  return (
+    <>
+      <MenuLabel>{isDirect(view.channel) ? view.label : `#${view.channel.name}`}</MenuLabel>
+      <MenuRow
+        icon="check"
+        label="Mark as read"
+        onClick={() => act(() => void api.markRead(workspaceId, id))}
+      />
+      <MenuRow
+        icon={view.prefs.starred ? 'star-filled' : 'star'}
+        label={view.prefs.starred ? 'Remove star' : 'Star channel'}
+        onClick={() => act(() => void api.setChannelPrefs(workspaceId, id, { starred: !view.prefs.starred }))}
+      />
+      <MenuRow
+        icon={view.prefs.muted ? 'bell' : 'bell-off'}
+        label={view.prefs.muted ? 'Unmute' : 'Mute channel'}
+        onClick={() => act(() => void api.setChannelPrefs(workspaceId, id, { muted: !view.prefs.muted }))}
+      />
+      <MenuSeparator />
+      <MenuRow icon="grip" label="Move to section…" onClick={() => setMoving(true)} />
+      <MenuRow icon="info" label="Open channel details" onClick={() => act(onDetails)} />
+      {!view.channel.isDefault ? (
+        <>
+          <MenuSeparator />
+          <MenuRow
+            icon="close"
+            label={isDirect(view.channel) ? 'Close conversation' : 'Leave channel'}
+            danger
+            onClick={() => act(() => void api.leaveChannel(workspaceId, id))}
+          />
+        </>
+      ) : null}
+    </>
   );
 }
 
@@ -437,6 +778,7 @@ export function WorkspaceMenu({
   onSettings,
   onMembers,
   onProfile,
+  onAgent,
   onLeave,
   onAddWorkspace,
 }: {
@@ -446,20 +788,20 @@ export function WorkspaceMenu({
   onSettings: () => void;
   onMembers: () => void;
   onProfile: () => void;
+  onAgent: () => void;
   onLeave: () => void;
   onAddWorkspace: () => void;
 }) {
-  const item = (label: string, action: () => void, hint?: string) => (
-    <button
-      className="menu-item"
+  const item = (icon: IconName, label: string, action: () => void, danger?: boolean) => (
+    <MenuRow
+      icon={icon}
+      label={label}
+      danger={danger}
       onClick={() => {
         action();
         onClose();
       }}
-    >
-      {label}
-      {hint ? <span className="menu-hint">{hint}</span> : null}
-    </button>
+    />
   );
 
   return (
@@ -472,14 +814,16 @@ export function WorkspaceMenu({
             {workspace.workspace.slug} · you are {workspace.me.role}
           </div>
         </div>
-        {item('Invite people', onInvite)}
-        {item('Manage members', onMembers)}
-        {item('Edit your profile here', onProfile)}
-        <div className="menu-sep" />
-        {item('Workspace settings', onSettings)}
-        {item('Add another workspace', onAddWorkspace)}
-        <div className="menu-sep" />
-        {item(`Leave ${workspace.workspace.name}`, onLeave)}
+        {item('agent', `${workspace.agent.name} — access`, onAgent)}
+        <MenuSeparator />
+        {item('people', 'Invite people', onInvite)}
+        {item('shield', 'Manage members', onMembers)}
+        {item('edit', 'Edit your profile here', onProfile)}
+        <MenuSeparator />
+        {item('settings', 'Workspace settings', onSettings)}
+        {item('plus', 'Add another workspace', onAddWorkspace)}
+        <MenuSeparator />
+        {item('close', `Leave ${workspace.workspace.name}`, onLeave, true)}
       </div>
     </Popover>
   );

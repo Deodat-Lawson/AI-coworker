@@ -44,18 +44,25 @@ import type {
   VaultSearchHit,
   VaultSettings,
   Workspace,
+  WorkspaceAgent,
+  WorkspaceAgentPatch,
   WorkspacePermissions,
   WorkspacePrefs,
   WorkspaceRole,
 } from '@ai-coworker/shared';
 import type { Appearance } from '@ai-coworker/shared';
 import {
+  AGENT_TOOL_KEYS,
   THEME_BACKGROUNDS,
+  agentMay,
+  agentSourceScope,
+  describeAgentReach,
   dueLabel,
   emptyStatus,
   isDirect,
   isOpen,
   normalizeAppearance,
+  overlappingReach,
   resolveTheme,
 } from '@ai-coworker/shared';
 import {
@@ -74,6 +81,8 @@ import {
 
 import type {
   ActivityItem,
+  AgentIsolationRow,
+  AgentIsolationView,
   AppState,
   ChannelView,
   ChatEntry,
@@ -404,6 +413,12 @@ function buildWorkspaceViews(a: PersonalAgent, kb: KnowledgeBase): WorkspaceView
       joinRequests: state.joinRequests,
       audit: state.audit,
       prefs: kb.prefs(state.workspace.id),
+      // Every workspace has exactly one agent, created the moment you are in
+      // the workspace and gated shut until you say otherwise.
+      agent: kb.workspaceAgent(state.workspace.id, {
+        name: `${kb.profile.displayName.split(' ')[0] ?? 'Your'}'s agent`,
+        accent: state.workspace.color,
+      }),
     };
   });
 }
@@ -1476,7 +1491,7 @@ function registerIpc(): void {
   handle<[string, string], void>('ws:transferOwnership', (workspaceId, address) => {
     requireAgent().transferOwnership(workspaceId, address);
   });
-  handle<[string, { address?: string; displayName?: string; title?: string }], void>(
+  handle<[string, { address?: string; displayName?: string; title?: string; avatar?: string }], void>(
     'ws:profile',
     (workspaceId, patch) => {
       requireAgent().setWorkspaceProfile(workspaceId, patch);
@@ -1551,6 +1566,81 @@ function registerIpc(): void {
   });
   handle<[string, string[]], void>('ch:dm', (workspaceId, addresses) => {
     requireAgent().openDirectMessage(workspaceId, addresses);
+  });
+
+  // --- the agent in one workspace -------------------------------------------
+
+  handle<[string, WorkspaceAgentPatch], WorkspaceAgent>('agent:save', async (workspaceId, patch) => {
+    return requireKnowledge().saveWorkspaceAgent(workspaceId, patch);
+  });
+
+  handle<[string], string | null>('agent:grantFolder', async (workspaceId) => {
+    const kb = requireKnowledge();
+    const picked = await dialog.showOpenDialog({
+      properties: ['openDirectory'],
+      title: 'Choose a folder this workspace’s agent may read',
+      buttonLabel: 'Grant',
+    });
+    if (picked.canceled || !picked.filePaths[0]) return null;
+    const folder = picked.filePaths[0];
+    const agent = kb.workspaceAgent(workspaceId);
+    // Granting a folder switches the capability on: a path in a list the
+    // runtime is not consulting would be a lie told by a settings screen.
+    await kb.saveWorkspaceAgent(workspaceId, {
+      access: {
+        folders: [...agent.access.folders, folder],
+        tools: { ...agent.access.tools, computer_folders: true },
+      },
+    });
+    return folder;
+  });
+
+  handle<[string, string], WorkspaceAgent>('agent:revokeFolder', async (workspaceId, folder) => {
+    const kb = requireKnowledge();
+    const agent = kb.workspaceAgent(workspaceId);
+    return kb.saveWorkspaceAgent(workspaceId, {
+      access: { folders: agent.access.folders.filter((f) => f !== folder) },
+    });
+  });
+
+  handle<[], AgentIsolationView>('agent:isolation', () => {
+    const kb = requireKnowledge();
+    const a = agent;
+    const names = new Map(
+      (a?.workspaces.all ?? []).map((s) => [s.workspace.id, s.workspace.name] as const),
+    );
+    const agents = kb.workspaceAgents.filter((entry) => names.has(entry.workspaceId));
+    const rows: AgentIsolationRow[] = agents.map((entry) => {
+      const scope = agentSourceScope(entry);
+      return {
+        workspaceId: entry.workspaceId,
+        workspaceName: names.get(entry.workspaceId) ?? entry.workspaceId,
+        agentName: entry.name,
+        emoji: entry.emoji,
+        accent: entry.accent,
+        autonomy: entry.autonomy,
+        reach: describeAgentReach(entry),
+        sourceCount: scope === null ? 'all' : scope.length,
+        folders: entry.access.folders,
+        ceiling: entry.access.ceiling,
+        tools: AGENT_TOOL_KEYS.filter((key) => agentMay(entry, key)),
+      };
+    });
+
+    const shared: AgentIsolationView['shared'] = [];
+    for (let i = 0; i < agents.length; i++) {
+      for (let j = i + 1; j < agents.length; j++) {
+        const overlap = overlappingReach(agents[i]!, agents[j]!);
+        if (overlap.length) {
+          shared.push({
+            a: names.get(agents[i]!.workspaceId) ?? agents[i]!.workspaceId,
+            b: names.get(agents[j]!.workspaceId) ?? agents[j]!.workspaceId,
+            overlap,
+          });
+        }
+      }
+    }
+    return { rows, shared };
   });
 
   handle<[string, string, Partial<ChannelPrefs>], void>('prefs:channel', async (workspaceId, channelId, patch) => {

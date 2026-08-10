@@ -4,20 +4,29 @@ import {
   type Appearance,
   type ChannelPrefs,
   type NotifyLevel,
+  type SidebarChannel,
   type WorkspaceRole,
   APPEARANCES,
   APPEARANCE_LABELS,
   WORKSPACE_COLORS,
   WORKSPACE_ICONS,
   isDirect,
+  moveSection,
+  newSection,
+  normalizeSections,
+  removeSection,
+  resolveSections,
 } from '@ai-coworker/shared';
 
 import { AdministrationPanel } from '../components/Administration.js';
 import { SHORTCUTS } from '../components/dialogs.js';
+import { Icon, channelIcon, type IconName } from '../components/icons.js';
+import { IconUploader } from '../components/IconUploader.js';
 import { ConfirmButton, Field } from '../components/ui.js';
 import { watchAppearance } from '../lib/theme.js';
 import { api, unwrap, type AppState, type WorkspaceView } from '../lib/api.js';
 import { dateTimeOf, plural, relative } from '../lib/format.js';
+import AgentAccess from './AgentAccess.js';
 import Sources from './Sources.js';
 
 /**
@@ -34,6 +43,7 @@ export type SettingsPane =
   | 'brain'
   | 'availability'
   | 'notifications'
+  | 'sidebar'
   | 'workspace'
   | 'members'
   | 'channels'
@@ -51,20 +61,23 @@ export type SettingsPane =
  * you. "This workspace" belongs to a membership. A setting sits in exactly one
  * of these, and the group heading is the promise about how far it reaches.
  */
-const PANES: { key: SettingsPane; label: string; group: string }[] = [
-  { key: 'brain', label: 'Brain', group: 'Everywhere' },
-  { key: 'network', label: 'Relay and network', group: 'Everywhere' },
-  { key: 'appearance', label: 'Appearance', group: 'Everywhere' },
-  { key: 'shortcuts', label: 'Shortcuts', group: 'Everywhere' },
-  { key: 'account', label: 'You', group: 'This agent' },
-  { key: 'agent', label: 'Instructions', group: 'This agent' },
-  { key: 'availability', label: 'Availability', group: 'This agent' },
-  { key: 'knowledge', label: 'Knowledge base', group: 'This agent' },
-  { key: 'sources', label: 'Sources', group: 'This agent' },
-  { key: 'notifications', label: 'Notifications', group: 'This workspace' },
-  { key: 'workspace', label: 'Workspace', group: 'This workspace' },
-  { key: 'members', label: 'Members and invites', group: 'This workspace' },
-  { key: 'channels', label: 'Channels', group: 'This workspace' },
+const PANES: { key: SettingsPane; label: string; group: string; icon: IconName }[] = [
+  { key: 'brain', label: 'Brain', group: 'Everywhere', icon: 'brain' },
+  { key: 'network', label: 'Relay and network', group: 'Everywhere', icon: 'globe' },
+  { key: 'appearance', label: 'Appearance', group: 'Everywhere', icon: 'palette' },
+  { key: 'shortcuts', label: 'Shortcuts', group: 'Everywhere', icon: 'layout' },
+  { key: 'account', label: 'You', group: 'You', icon: 'people' },
+  { key: 'availability', label: 'Availability', group: 'You', icon: 'calendar' },
+  { key: 'knowledge', label: 'Knowledge base', group: 'You', icon: 'knowledge' },
+  { key: 'sources', label: 'Imported memory', group: 'You', icon: 'database' },
+  // The agent pane is first in its group on purpose: in a workspace, the agent
+  // that represents you there is the thing you came to this screen to change.
+  { key: 'agent', label: 'Agent and access', group: 'This workspace', icon: 'agent' },
+  { key: 'notifications', label: 'Notifications', group: 'This workspace', icon: 'bell' },
+  { key: 'sidebar', label: 'Sidebar', group: 'This workspace', icon: 'layout' },
+  { key: 'workspace', label: 'Workspace', group: 'This workspace', icon: 'workspace' },
+  { key: 'members', label: 'Members and invites', group: 'This workspace', icon: 'shield' },
+  { key: 'channels', label: 'Channels', group: 'This workspace', icon: 'hash' },
 ];
 
 interface Props {
@@ -101,6 +114,7 @@ export default function Settings({
                 className={`settings-rail-item ${pane === p.key ? 'active' : ''}`}
                 onClick={() => onPane(p.key)}
               >
+                <Icon name={p.icon} size={16} className="settings-rail-icon" />
                 {p.label}
               </button>
             ))}
@@ -113,7 +127,8 @@ export default function Settings({
           boxes. */}
       <div className="settings-pane" key={workspace?.workspace.id ?? 'none'}>
         {pane === 'account' ? <AccountPane state={state} workspace={workspace} /> : null}
-        {pane === 'agent' ? <AgentPane state={state} /> : null}
+        {pane === 'agent' ? <AgentAccess workspace={workspace} /> : null}
+        {pane === 'sidebar' ? <SidebarPane workspace={workspace} /> : null}
         {pane === 'brain' ? <BrainPane state={state} /> : null}
         {pane === 'availability' ? <AvailabilityPane state={state} /> : null}
         {pane === 'notifications' ? (
@@ -193,6 +208,7 @@ function AccountPane({ state, workspace }: { state: AppState; workspace: Workspa
 
   const [wsName, setWsName] = useState(workspace?.me.displayName ?? '');
   const [wsTitle, setWsTitle] = useState(workspace?.me.title ?? '');
+  const [avatar, setAvatar] = useState(workspace?.me.avatar ?? '');
   const [wsNote, wsSave, wsBusy] = useSaver();
 
   return (
@@ -289,9 +305,19 @@ function AccountPane({ state, workspace }: { state: AppState; workspace: Workspa
           <h2>How you appear in {workspace.workspace.name}</h2>
           <div className="card">
             <p className="card-sub" style={{ marginTop: 0 }}>
-              Each workspace can see you differently. Your address stays{' '}
+              Each workspace can see you differently — a photograph at work and a cartoon in a side
+              project is a reasonable thing to want. Your address stays{' '}
               <code>{workspace.me.address}</code>.
             </p>
+            <Field label="Picture" hint="Square, resized here before it is sent. Initials are the fallback, not a placeholder.">
+              <IconUploader
+                image={avatar}
+                emoji=""
+                name={wsName || workspace.me.displayName}
+                color={workspace.workspace.color}
+                onImage={setAvatar}
+              />
+            </Field>
             <div className="row">
               <Field label="Display name">
                 <input value={wsName} onChange={(e) => setWsName(e.target.value)} />
@@ -309,6 +335,7 @@ function AccountPane({ state, workspace }: { state: AppState; workspace: Workspa
                     api.setWorkspaceProfile(workspace.workspace.id, {
                       displayName: wsName,
                       title: wsTitle,
+                      avatar,
                     }),
                   ),
                 )
@@ -320,6 +347,8 @@ function AccountPane({ state, workspace }: { state: AppState; workspace: Workspa
           </div>
         </>
       ) : null}
+
+      <BaseInstructions state={state} />
     </>
   );
 }
@@ -328,27 +357,28 @@ function AccountPane({ state, workspace }: { state: AppState; workspace: Workspa
 // Agent
 // ---------------------------------------------------------------------------
 
-function AgentPane({ state }: { state: AppState }) {
+/**
+ * The instructions every one of your agents starts from.
+ *
+ * Per-workspace instructions live with the agent that follows them, under
+ * "Agent and access" — a workspace agent can add to these or, by switching
+ * inheritance off, ignore them entirely.
+ */
+function BaseInstructions({ state }: { state: AppState }) {
   const profile = state.profile!;
   const [instructions, setInstructions] = useState(profile.agentInstructions);
   const [note, save, busy] = useSaver();
 
   return (
     <>
-      <h1>Instructions</h1>
-      <p className="subtitle">
-        Your agent speaks for you in every room it enters. This is where you tell it how — and it
-        applies to your agent only. The model behind it is set once for the whole app, under Brain.
-      </p>
-
-      <h2>Standing instructions</h2>
+      <h2>Standing instructions, everywhere</h2>
       <div className="card">
         <Field
-          label="What your agent should always do — and never do"
-          hint="It follows these in every meeting. This is where you protect your own time."
+          label="What your agents should always do — and never do"
+          hint="Every workspace agent starts from these. Each one can add to them, or be told to ignore them, on its own screen."
         >
           <textarea
-            style={{ minHeight: 140 }}
+            style={{ minHeight: 120 }}
             value={instructions}
             onChange={(e) => setInstructions(e.target.value)}
             placeholder="Never commit me to more than two new items in a meeting. Push back on anything that adds scope before launch."
@@ -363,6 +393,147 @@ function AgentPane({ state }: { state: AppState }) {
         </button>
         {note}
       </div>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sidebar
+// ---------------------------------------------------------------------------
+
+/**
+ * The sidebar, as a settings screen rather than a right-click.
+ *
+ * Everything here is also reachable by right-clicking the sidebar itself,
+ * which is how anybody who has used Slack or Discord will do it. This exists
+ * for the other half of people — the ones who look for a settings screen — and
+ * for the two controls that have no natural home on a hover menu.
+ */
+function SidebarPane({ workspace }: { workspace: WorkspaceView | undefined }) {
+  const [note, save] = useSaver();
+  const [name, setName] = useState('');
+  if (!workspace) return <NoWorkspace />;
+
+  const id = workspace.workspace.id;
+  const channels: SidebarChannel[] = workspace.channels
+    .filter((c) => c.joined && (!c.channel.archived || Boolean(c.channel.meetingId)))
+    .map((c) => ({
+      id: c.channel.id,
+      kind: c.channel.kind,
+      starred: c.prefs.starred,
+      isMeeting: Boolean(c.channel.meetingId),
+      archived: c.channel.archived,
+      lastMessageAt: c.channel.lastMessageAt || c.channel.createdAt,
+      name: isDirect(c.channel) ? c.label : c.channel.name,
+    }));
+  // Drawn from the resolved layout, edited against the stored one — writing the
+  // resolved list back would pin every channel where it happens to sit today.
+  const sections = resolveSections(workspace.prefs.sections, channels);
+  const layout = normalizeSections(workspace.prefs.sections);
+  const counts = new Map(sections.map((s) => [s.id, s.channels.length]));
+  const setSections = (next: typeof sections) =>
+    void save(() => unwrap(api.setWorkspacePrefs(id, { sections: next })), 'Saved.');
+
+  return (
+    <>
+      <h1>Sidebar</h1>
+      <p className="subtitle">
+        How the channel list is arranged in <strong>{workspace.workspace.name}</strong>. Yours alone —
+        nobody else in the workspace sees your sections.
+      </p>
+
+      <h2>Density</h2>
+      <div className="card">
+        <div className="row">
+          {(['comfortable', 'compact'] as const).map((option) => (
+            <button
+              key={option}
+              className={`tab ${(workspace.prefs.density ?? 'comfortable') === option ? 'active' : ''}`}
+              onClick={() => void save(() => unwrap(api.setWorkspacePrefs(id, { density: option })), 'Saved.')}
+            >
+              {option === 'comfortable' ? 'Comfortable' : 'Compact'}
+            </button>
+          ))}
+        </div>
+        <label className="check" style={{ marginTop: 10 }}>
+          <input
+            type="checkbox"
+            checked={workspace.prefs.unreadOnly ?? false}
+            onChange={(e) =>
+              void save(() => unwrap(api.setWorkspacePrefs(id, { unreadOnly: e.target.checked })), 'Saved.')
+            }
+          />
+          Show only channels with something unread
+        </label>
+        <p className="hint">
+          The channel you are reading always stays put, unread or not — a list that swallows the room
+          you are in is not a filter, it is a bug.
+        </p>
+      </div>
+
+      <h2>Sections</h2>
+      <div className="card tight">
+        {layout.map((s, i) => {
+          const shown = counts.get(s.id) ?? 0;
+          return (
+            <div className="section-row" key={s.id}>
+              <span className="section-emoji">{s.emoji}</span>
+              <div className="section-text">
+                <div className="section-name">{s.name}</div>
+                <div className="section-sub">
+                  {shown} channel{shown === 1 ? '' : 's'}
+                  {s.builtin ? ' · standard section' : ''}
+                  {s.collapsed ? ' · collapsed' : ''}
+                </div>
+              </div>
+              <div className="member-actions">
+                <button disabled={i === 0} onClick={() => setSections(moveSection(layout, s.id, i - 1))}>
+                  <Icon name="chevron-up" size={14} />
+                </button>
+                <button
+                  disabled={i === layout.length - 1}
+                  onClick={() => setSections(moveSection(layout, s.id, i + 1))}
+                >
+                  <Icon name="chevron-down" size={14} />
+                </button>
+                {!s.builtin ? (
+                  <button className="danger" onClick={() => setSections(removeSection(layout, s.id))}>
+                    Delete
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="row" style={{ marginTop: 10 }}>
+        <input
+          placeholder="Name a new section — “Launch”, “Clients”, “Muted but watching”"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter' || !name.trim()) return;
+            setSections([...layout, newSection({ name: name.trim() })]);
+            setName('');
+          }}
+        />
+        <button
+          style={{ flex: '0 0 auto' }}
+          disabled={!name.trim()}
+          onClick={() => {
+            setSections([...layout, newSection({ name: name.trim() })]);
+            setName('');
+          }}
+        >
+          Add section
+        </button>
+      </div>
+      <p className="hint">
+        Drag a channel onto a section in the sidebar to file it there, or right-click it and pick
+        “Move to section”.
+      </p>
+      {note}
     </>
   );
 }
@@ -698,6 +869,7 @@ function WorkspacePane({ workspace }: { workspace: WorkspaceView | undefined }) 
   const [name, setName] = useState(workspace?.workspace.name ?? '');
   const [description, setDescription] = useState(workspace?.workspace.description ?? '');
   const [icon, setIcon] = useState(workspace?.workspace.icon ?? '');
+  const [iconImage, setIconImage] = useState(workspace?.workspace.iconImage ?? '');
   const [color, setColor] = useState(workspace?.workspace.color ?? '');
   const [discoverable, setDiscoverable] = useState(workspace?.workspace.discoverable ?? false);
   const [note, save, busy] = useSaver();
@@ -727,14 +899,25 @@ function WorkspacePane({ workspace }: { workspace: WorkspaceView | undefined }) 
             onChange={(e) => setDescription(e.target.value)}
           />
         </Field>
-        <Field label="Icon and colour">
+        <Field label="Icon and colour" hint="Upload a square image, or pick an emoji. The image wins where both are set.">
+          <IconUploader
+            image={iconImage}
+            emoji={icon}
+            name={name}
+            color={color}
+            disabled={!canEdit}
+            onImage={setIconImage}
+          />
           <div className="picker-row">
             {WORKSPACE_ICONS.map((option) => (
               <button
                 key={option}
-                className={`icon-choice ${icon === option ? 'on' : ''}`}
+                className={`icon-choice ${icon === option && !iconImage ? 'on' : ''}`}
                 disabled={!canEdit}
-                onClick={() => setIcon(option)}
+                onClick={() => {
+                  setIcon(option);
+                  setIconImage('');
+                }}
               >
                 {option}
               </button>
@@ -774,6 +957,7 @@ function WorkspacePane({ workspace }: { workspace: WorkspaceView | undefined }) 
                   name: name.trim(),
                   description: description.trim(),
                   icon,
+                  iconImage,
                   color,
                   discoverable,
                 }),
@@ -914,7 +1098,7 @@ function ChannelsPane({
             <div className="member-row" key={c.channel.id}>
               <div className="member-text">
                 <button className="member-name link" onClick={() => onOpenChannel(c.channel.id)}>
-                  {c.channel.kind === 'private' ? '🔒' : '#'}
+                  <Icon name={channelIcon(c.channel.kind)} size={14} />
                   {c.channel.name}
                   {c.channel.archived ? <span className="tag small">archived</span> : null}
                   {c.channel.isDefault ? <span className="tag small accent">default</span> : null}

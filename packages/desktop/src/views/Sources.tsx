@@ -7,7 +7,9 @@ import type {
   MemoryView,
   SourceView,
 } from '../../electron/memory-ipc.js';
-import type { AppState } from '../lib/api.js';
+import { agentMayUseSource, SOURCE_KIND_TOOLS } from '@ai-coworker/shared';
+
+import { api, type AppState } from '../lib/api.js';
 import { relative } from '../lib/format.js';
 
 declare global {
@@ -86,9 +88,10 @@ export default function Sources({ state }: { state: AppState }) {
     <div>
       <div className="card-head">
         <div>
-          <h1>Sources</h1>
+          <h1>Imported memory</h1>
           <div className="subtitle">
-            Memory your other agents already have on this machine, and who your agent may repeat it to.
+            What your other tools already know on this machine — and, per source, which of your
+            workspace agents may recall it. Importing puts it here; it hands it to nobody.
           </div>
         </div>
         <div className="row">
@@ -146,6 +149,27 @@ export default function Sources({ state }: { state: AppState }) {
             key={source.id}
             source={source}
             busy={busy}
+            grants={state.workspaces.map((w) => ({
+              id: w.workspace.id,
+              name: w.workspace.name,
+              agentName: w.agent.name,
+              granted: agentMayUseSource(w.agent, source.id, source.kind),
+            }))}
+            onGrant={(workspaceId, on) => {
+              const view = state.workspaces.find((w) => w.workspace.id === workspaceId);
+              if (!view) return;
+              const sources = on
+                ? [...new Set([...view.agent.access.sources, source.id])]
+                : view.agent.access.sources.filter((s) => s !== source.id);
+              const tools: Record<string, boolean> = { memory_recall: sources.length > 0 };
+              const kindTool = SOURCE_KIND_TOOLS[source.kind];
+              if (kindTool && on) tools[kindTool] = true;
+              void run(() =>
+                api.saveWorkspaceAgent(workspaceId, {
+                  access: { sources, sourceMode: sources.length ? 'selected' : 'none', tools },
+                }),
+              );
+            }}
             onToggle={(enabled) =>
               void run(() => window.memory.setSourceEnabled(source.id, enabled))
             }
@@ -251,10 +275,20 @@ export default function Sources({ state }: { state: AppState }) {
   );
 }
 
+/** One workspace's answer to "may your agent here use this source?". */
+interface Grant {
+  id: string;
+  name: string;
+  agentName: string;
+  granted: boolean;
+}
+
 function SourceRow({
   source,
   busy,
   filtered,
+  grants,
+  onGrant,
   onToggle,
   onSync,
   onDisconnect,
@@ -263,6 +297,8 @@ function SourceRow({
   source: SourceView;
   busy: boolean;
   filtered: boolean;
+  grants: Grant[];
+  onGrant: (workspaceId: string, on: boolean) => void;
   onToggle: (enabled: boolean) => void;
   onSync: () => void;
   onDisconnect: (purge: boolean) => void;
@@ -309,6 +345,27 @@ function SourceRow({
           )}
         </div>
       </div>
+
+      {/* Importing a source puts it on this machine. It does not hand it to any
+          agent: each workspace's agent is granted separately, and this row is
+          where you can see all of those answers at once. */}
+      {grants.length ? (
+        <div className="grant-strip">
+          <span className="grant-strip-label">Agents allowed to recall this</span>
+          {grants.map((grant) => (
+            <button
+              key={grant.id}
+              className={`tab ${grant.granted ? 'active' : ''}`}
+              disabled={busy}
+              title={`${grant.agentName} in ${grant.name}`}
+              onClick={() => onGrant(grant.id, !grant.granted)}
+            >
+              {grant.granted ? '✓ ' : ''}
+              {grant.name}
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

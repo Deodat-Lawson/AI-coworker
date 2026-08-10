@@ -64,7 +64,21 @@ export default function WorkspaceRail({ workspaces, activeId, onSwitch, onAdd }:
             aria-current={active}
           >
             <span className="rail-icon" style={{ borderColor: active ? view.workspace.color : undefined }}>
-              {view.workspace.icon || initials(view.workspace.name)}
+              {view.workspace.iconImage ? (
+                <img className="rail-img" src={view.workspace.iconImage} alt="" />
+              ) : (
+                view.workspace.icon || initials(view.workspace.name)
+              )}
+            </span>
+            {/* The agent that represents you here, drawn on its workspace. Two
+                tiles side by side is the clearest statement the app can make
+                that these are two different agents. */}
+            <span
+              className="rail-agent"
+              style={{ background: view.agent.accent }}
+              title={`${view.agent.name} · ${view.agent.autonomy === 'observer' ? 'watching only' : view.agent.autonomy === 'ask' ? 'asks first' : 'acts for you'}`}
+            >
+              {view.agent.emoji}
             </span>
             {view.mentions > 0 ? (
               <span className="rail-badge">{view.mentions > 99 ? '99+' : view.mentions}</span>

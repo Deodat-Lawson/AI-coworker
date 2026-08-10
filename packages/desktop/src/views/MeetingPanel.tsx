@@ -1,3 +1,4 @@
+import { Icon } from '../components/icons.js';
 import { api, type AppState } from '../lib/api.js';
 import { dateTimeOf, nameOf, relative } from '../lib/format.js';
 
@@ -29,7 +30,7 @@ export default function MeetingPanel({ state, meetingId, onClose, onWatch }: Pro
         <header className="chat-head">
           <div className="chat-title">Meeting</div>
           <button className="ghost" onClick={onClose} aria-label="Close">
-            ✕
+            <Icon name="close" size={15} />
           </button>
         </header>
         <div className="panel scroll">
@@ -55,7 +56,7 @@ export default function MeetingPanel({ state, meetingId, onClose, onWatch }: Pro
           {live ? <span className="side-badge live">live</span> : null}
         </div>
         <button className="ghost" onClick={onClose} aria-label="Close">
-          ✕
+          <Icon name="close" size={15} />
         </button>
       </header>
 

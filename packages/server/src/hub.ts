@@ -51,6 +51,7 @@ import {
   slugify,
   SNAPSHOT_PAGE,
   validateChannelName,
+  validateIconImage,
   WORKSPACE_COLORS,
   WORKSPACE_ICONS,
 } from '@ai-coworker/shared';
@@ -79,6 +80,8 @@ interface MemberRecord {
   /** Per-workspace overrides; absent means "use the person's own profile". */
   displayName?: string;
   title?: string;
+  /** An uploaded square image, as a data URI; absent means "draw initials". */
+  avatar?: string;
 }
 
 interface ChannelRecord {
@@ -405,6 +408,7 @@ export class WorkspaceHub {
       workspaceId: record.workspace.id,
       address,
       displayName: entry.displayName ?? profile?.displayName ?? address.split('@')[0]!,
+      avatar: entry.avatar,
       title: entry.title ?? profile?.title ?? '',
       bio: profile?.bio ?? '',
       timezone: profile?.timezone ?? 'UTC',
@@ -571,6 +575,7 @@ export class WorkspaceHub {
     createdBy: AgentAddress;
     description?: string;
     icon?: string;
+    iconImage?: string;
     color?: string;
     discoverable?: boolean;
     channels?: string[];
@@ -583,6 +588,7 @@ export class WorkspaceHub {
       name: input.name,
       description: input.description ?? '',
       icon: input.icon || WORKSPACE_ICONS[seed % WORKSPACE_ICONS.length]!,
+      iconImage: input.iconImage,
       color: input.color || WORKSPACE_COLORS[seed % WORKSPACE_COLORS.length]!,
       createdBy: input.createdBy,
       createdAt: now,
@@ -643,6 +649,7 @@ export class WorkspaceHub {
       slug?: string;
       description?: string;
       icon?: string;
+      iconImage?: string;
       color?: string;
       discoverable?: boolean;
       channels?: string[];
@@ -655,12 +662,18 @@ export class WorkspaceHub {
       .filter((r): r is { ok: true; name: string } => r.ok)
       .map((r) => r.name);
 
+    if (input.iconImage) {
+      const check = validateIconImage(input.iconImage);
+      if (!check.ok) throw new HubError('bad_icon', check.error);
+    }
+
     const record = this.newWorkspace({
       name,
       slug: input.slug?.trim() || name,
       createdBy: actor,
       description: input.description?.trim().slice(0, 280),
       icon: input.icon,
+      iconImage: input.iconImage || undefined,
       color: input.color,
       discoverable: input.discoverable,
       channels: extra,
@@ -695,6 +708,15 @@ export class WorkspaceHub {
     }
     if (typeof patch.description === 'string') w.description = patch.description.slice(0, 280);
     if (typeof patch.icon === 'string' && patch.icon) w.icon = [...patch.icon][0] ?? w.icon;
+    if (typeof patch.iconImage === 'string') {
+      // An empty string clears the upload and falls back to the emoji. Anything
+      // else is checked here rather than trusted: this record is replicated to
+      // every member, so an unbounded image is everybody's bandwidth bill.
+      const check = validateIconImage(patch.iconImage);
+      if (!check.ok) throw new HubError('bad_icon', check.error);
+      w.iconImage = patch.iconImage || undefined;
+      changed.push(patch.iconImage ? 'icon image' : 'icon image removed');
+    }
     if (typeof patch.color === 'string' && /^#[0-9a-f]{6}$/i.test(patch.color)) w.color = patch.color;
     if (typeof patch.discoverable === 'boolean' && patch.discoverable !== w.discoverable) {
       w.discoverable = patch.discoverable;
@@ -1406,7 +1428,7 @@ export class WorkspaceHub {
   setWorkspaceProfile(
     actor: AgentAddress,
     workspaceId: WorkspaceId,
-    patch: { address?: AgentAddress; displayName?: string; title?: string },
+    patch: { address?: AgentAddress; displayName?: string; title?: string; avatar?: string },
   ): void {
     const record = this.requireMembership(workspaceId, actor);
     this.requireActive(record, actor);
@@ -1424,6 +1446,14 @@ export class WorkspaceHub {
     if (patch.title !== undefined) {
       const trimmed = patch.title.trim().slice(0, 80);
       entry.title = trimmed || undefined;
+    }
+    if (patch.avatar !== undefined) {
+      // Checked here, not trusted from the app: a member record is replicated
+      // to everybody in the workspace, so an unbounded image is a bill charged
+      // to every one of them.
+      const check = validateIconImage(patch.avatar);
+      if (!check.ok) throw new HubError('bad_avatar', check.error);
+      entry.avatar = patch.avatar || undefined;
     }
     if (subject !== actor) this.audit(record, actor, 'profile_changed_by_admin', subject);
     const member = this.memberView(record, subject)!;

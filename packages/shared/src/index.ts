@@ -1,5 +1,7 @@
 export * from './access.js';
+export * from './agent.js';
 export * from './domain.js';
+export * from './sidebar.js';
 export * from './workspace.js';
 export * from './markup.js';
 export * from './ingest.js';

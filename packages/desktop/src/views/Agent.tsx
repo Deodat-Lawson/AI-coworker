@@ -1,31 +1,47 @@
 import { useEffect, useRef, useState } from 'react';
 
-import { api, type AppState } from '../lib/api.js';
+import { agentMay, describeAgentReach } from '@ai-coworker/shared';
+
+import { Icon } from '../components/icons.js';
+import { api, type AppState, type WorkspaceView } from '../lib/api.js';
 import { dateTimeOf, nameOf, relative, timeOf } from '../lib/format.js';
 
 interface Props {
   state: AppState;
+  workspace: WorkspaceView | undefined;
   /** Jump to a meeting: its channel, with the briefing open beside it. */
   onOpenMeeting: (meetingId: string) => void;
+  /** Open this agent's access screen. */
+  onOpenAccess: () => void;
   /** Work assigned in a meeting lives on the to-do list, not in a second one. */
   onOpenTasks: () => void;
 }
 
 const SUGGESTIONS = [
-  'Book a 30 minute sync with Dana about the auth migration',
-  'What am I on the hook for right now?',
-  'Note: SSO refresh is blocked on a decision from mobile',
-  'Block 2 hours tomorrow morning for focus time',
-  'What happened in my last meeting?',
-];
+  { icon: 'meeting', text: 'Book a 30 minute sync with Dana about the auth migration' },
+  { icon: 'check', text: 'What am I on the hook for right now?' },
+  { icon: 'edit', text: 'Note: SSO refresh is blocked on a decision from mobile' },
+  { icon: 'calendar', text: 'Block 2 hours tomorrow morning for focus time' },
+  { icon: 'threads', text: 'What happened in my last meeting?' },
+] as const;
 
 /**
- * Your own agent, laid out like every other conversation in the app: you talk
- * to it on the left, and what it is currently holding for you — meetings it has
- * booked, work it accepted on your behalf, questions it could not answer
- * without you — sits beside it.
+ * Your agent *in this workspace*, laid out like every other conversation in the
+ * app: you talk to it on the left, and what it is currently holding for you —
+ * meetings it has booked, work it accepted on your behalf, questions it could
+ * not answer without you — sits beside it.
+ *
+ * The header is not decoration. Which agent you are talking to, and how far it
+ * can reach, changes the answers you get, so both are stated before the first
+ * message rather than buried on a settings screen.
  */
-export default function Agent({ state, onOpenMeeting, onOpenTasks }: Props) {
+export default function Agent({
+  state,
+  workspace,
+  onOpenMeeting,
+  onOpenAccess,
+  onOpenTasks,
+}: Props) {
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,13 +62,21 @@ export default function Agent({ state, onOpenMeeting, onOpenTasks }: Props) {
     setBusy(false);
   }
 
+  const agent = workspace?.agent;
+
   return (
     <div className="chat with-thread">
       <div className="chat-main">
         <header className="chat-head">
           <div className="chat-title">
-            <span className="chat-glyph">◆</span>
-            Your agent
+            <span
+              className="agent-chip"
+              style={agent ? { background: `${agent.accent}22`, borderColor: agent.accent } : undefined}
+            >
+              {agent?.emoji ?? '◆'}
+            </span>
+            {agent?.name ?? 'Your agent'}
+            {workspace ? <span className="chat-title-where">in {workspace.workspace.name}</span> : null}
           </div>
           <div className="chat-head-meta">
             <span className={`tag ${state.connection.providerLive ? 'good' : 'warn'}`}>
@@ -63,8 +87,24 @@ export default function Agent({ state, onOpenMeeting, onOpenTasks }: Props) {
                 ? 'on the network — other agents can reach it'
                 : 'offline — it cannot be reached for meetings'}
             </span>
+            {agent ? (
+              <button className="ghost" onClick={onOpenAccess} title="What this agent can reach">
+                <Icon name="shield-check" size={14} /> Access
+              </button>
+            ) : null}
           </div>
         </header>
+
+        {agent && !agentMay(agent, 'memory_recall') && !agentMay(agent, 'computer_folders') ? (
+          <button className="reach-strip" onClick={onOpenAccess}>
+            <Icon name="shield" size={15} />
+            <span>
+              <strong>{agent.name}</strong> reaches nothing else on this machine. Grant it a tool or a
+              folder and it can answer from what you already have.
+            </span>
+            <Icon name="chevron-right" size={15} />
+          </button>
+        ) : null}
 
         <div className="messages">
           <div className="msg-spacer" />
@@ -74,6 +114,7 @@ export default function Agent({ state, onOpenMeeting, onOpenTasks }: Props) {
               <p className="subtitle">
                 It keeps your knowledge base current, books meetings with other people's agents, and
                 attends them for you.
+                {agent ? <> {describeAgentReach(agent)}</> : null}
                 {!state.connection.providerLive ? (
                   <>
                     {' '}
@@ -86,8 +127,9 @@ export default function Agent({ state, onOpenMeeting, onOpenTasks }: Props) {
               </p>
               <div className="suggestions">
                 {SUGGESTIONS.map((s) => (
-                  <button className="suggestion" key={s} onClick={() => void send(s)}>
-                    {s}
+                  <button className="suggestion" key={s.text} onClick={() => void send(s.text)}>
+                    <Icon name={s.icon} size={15} />
+                    {s.text}
                   </button>
                 ))}
               </div>
@@ -100,7 +142,8 @@ export default function Agent({ state, onOpenMeeting, onOpenTasks }: Props) {
                 <div className="tool-trace">
                   {entry.actions.map((a, j) => (
                     <div key={j}>
-                      → {a.tool}: {a.result.split('\n')[0].slice(0, 120)}
+                      <Icon name="arrow-right" size={12} /> {a.tool}:{' '}
+                      {a.result.split('\n')[0].slice(0, 120)}
                     </div>
                   ))}
                 </div>
@@ -118,7 +161,7 @@ export default function Agent({ state, onOpenMeeting, onOpenTasks }: Props) {
           <div className="composer">
             <textarea
               value={draft}
-              placeholder="Ask your agent to do something…"
+              placeholder={agent ? `Ask ${agent.name} to do something…` : 'Ask your agent to do something…'}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
@@ -133,7 +176,7 @@ export default function Agent({ state, onOpenMeeting, onOpenTasks }: Props) {
               disabled={busy || !draft.trim()}
               onClick={() => void send(draft)}
             >
-              Send
+              <Icon name="send" size={15} /> Send
             </button>
             {state.chat.length ? (
               <button style={{ flex: '0 0 auto' }} onClick={() => void api.clearChat()}>
@@ -150,7 +193,15 @@ export default function Agent({ state, onOpenMeeting, onOpenTasks }: Props) {
 }
 
 /** Everything your agent is holding on your behalf, in one column. */
-function AgentLedger({ state, onOpenMeeting, onOpenTasks }: Props) {
+function AgentLedger({
+  state,
+  onOpenMeeting,
+  onOpenTasks,
+}: {
+  state: AppState;
+  onOpenMeeting: (meetingId: string) => void;
+  onOpenTasks: () => void;
+}) {
   const me = state.profile!.address;
   const openTasks = state.tasks
     .filter((t) => t.assignee === me && t.status !== 'done' && t.status !== 'dropped')
@@ -172,6 +223,7 @@ function AgentLedger({ state, onOpenMeeting, onOpenTasks }: Props) {
       <div className="panel scroll">
         {state.connection.state === 'error' ? (
           <div className="banner bad">
+            <Icon name="alert" size={17} />
             <div>
               <div className="card-title">Can't reach the relay</div>
               <div className="card-sub">{state.connection.error ?? state.connection.relayUrl}</div>
@@ -182,6 +234,7 @@ function AgentLedger({ state, onOpenMeeting, onOpenTasks }: Props) {
 
         {state.live.map((room) => (
           <div className="banner" key={room.meeting.id}>
+            <Icon name="meeting" size={17} />
             <div>
               <div className="card-title">
                 {room.meeting.title} is happening now
@@ -200,6 +253,7 @@ function AgentLedger({ state, onOpenMeeting, onOpenTasks }: Props) {
 
         {needsYou.length ? (
           <div className="banner warn">
+            <Icon name="alert" size={17} />
             <div>
               <div className="card-title">
                 Your agent needs you on {needsYou.length} thing{needsYou.length === 1 ? '' : 's'}
@@ -210,7 +264,9 @@ function AgentLedger({ state, onOpenMeeting, onOpenTasks }: Props) {
           </div>
         ) : null}
 
-        <h2>Coming up</h2>
+        <h2>
+          <Icon name="calendar" size={15} /> Coming up
+        </h2>
         {upcoming.length === 0 ? (
           <div className="empty">
             Nothing scheduled. Ask for a meeting, or press <strong>Meet</strong> in any channel — the
@@ -237,7 +293,7 @@ function AgentLedger({ state, onOpenMeeting, onOpenTasks }: Props) {
                     void api.startMeetingNow(meeting.id);
                   }}
                 >
-                  Run it now
+                  <Icon name="play" size={13} /> Run it now
                 </button>{' '}
                 <button
                   className="danger"
@@ -255,7 +311,9 @@ function AgentLedger({ state, onOpenMeeting, onOpenTasks }: Props) {
 
         {/* Work your agent took on lands on the same to-do list as everything
             else, so this is a window onto it rather than a second one. */}
-        <h2>Your work</h2>
+        <h2>
+          <Icon name="check" size={15} /> Your work
+        </h2>
         {openTasks.length === 0 ? (
           <div className="empty">Nothing on your to-do list right now.</div>
         ) : (
@@ -288,7 +346,9 @@ function AgentLedger({ state, onOpenMeeting, onOpenTasks }: Props) {
           </>
         )}
 
-        <h2>Latest briefings</h2>
+        <h2>
+          <Icon name="file" size={15} /> Latest briefings
+        </h2>
         {briefings.length === 0 ? (
           <div className="empty">
             After a meeting, your agent writes you a briefing — you never read a transcript unless you
@@ -306,7 +366,9 @@ function AgentLedger({ state, onOpenMeeting, onOpenTasks }: Props) {
           ))
         )}
 
-        <h2>Agent activity</h2>
+        <h2>
+          <Icon name="activity" size={15} /> Agent activity
+        </h2>
         {state.activities.length === 0 ? (
           <div className="empty">Nothing yet.</div>
         ) : (

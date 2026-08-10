@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { isDirect, nextAppearance } from '@ai-coworker/shared';
 
 import ChannelSidebar, { WorkspaceMenu, type Section } from './components/ChannelSidebar.js';
+import NewAgentDialog from './components/NewAgentDialog.js';
 import Onboarding from './components/Onboarding.js';
 import SignUp from './components/SignUp.js';
 import QuickSwitcher from './components/QuickSwitcher.js';
@@ -18,7 +19,7 @@ import {
   StatusDialog,
 } from './components/dialogs.js';
 import { api, emptyState, type AppState } from './lib/api.js';
-import { watchAppearance } from './lib/theme.js';
+import { applyAccent, watchAppearance } from './lib/theme.js';
 import Activity from './views/Activity.js';
 import Agent from './views/Agent.js';
 import Agents from './views/Agents.js';
@@ -51,6 +52,8 @@ export default function App() {
   const [searching, setSearching] = useState(false);
   const [demoSetup, setDemoSetup] = useState(false);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  /** Workspaces whose agent has been introduced in this session. */
+  const [metAgents, setMetAgents] = useState<string[]>([]);
 
   useEffect(() => {
     let active = true;
@@ -80,13 +83,20 @@ export default function App() {
     };
   }, []);
 
-  // The theme follows the chosen appearance, and keeps following the machine
-  // for as long as the choice is "system" — not just at startup.
-  useEffect(() => watchAppearance(state.appearance), [state.appearance]);
-
   const workspace = useMemo(
     () => state.workspaces.find((w) => w.workspace.id === state.activeWorkspaceId),
     [state.workspaces, state.activeWorkspaceId],
+  );
+
+  // The theme follows the chosen appearance, and keeps following the machine
+  // for as long as the choice is "system" — not just at startup. The workspace
+  // you are in tints it, and the tints are re-derived every time the theme
+  // resolves: they are mixed against the ground, so dark and light are not the
+  // same numbers.
+  const accent = workspace?.workspace.color ?? null;
+  useEffect(
+    () => watchAppearance(state.appearance, () => applyAccent(accent)),
+    [state.appearance, accent],
   );
 
   const openChannel = useCallback(
@@ -361,6 +371,7 @@ export default function App() {
           onWorkspaceMenu={() => setWsMenu(true)}
           onStatus={() => setDialog({ kind: 'status' })}
           onSearch={() => setSearching(true)}
+          onChannelDetails={(channelId) => setDialog({ kind: 'channel-details', channelId })}
         />
         {wsMenu && workspace ? (
           <div className="ws-menu-anchor">
@@ -370,6 +381,7 @@ export default function App() {
               onInvite={() => openSettings('members')}
               onMembers={() => openSettings('members')}
               onProfile={() => openSettings('account')}
+              onAgent={() => openSettings('agent')}
               onSettings={() => openSettings('workspace')}
               onLeave={() => void api.leaveWorkspace(workspace.workspace.id)}
               onAddWorkspace={() => setDialog({ kind: 'add-workspace' })}
@@ -417,7 +429,13 @@ export default function App() {
             onOpenMeeting={openMeeting}
           />
         ) : section === 'agent' ? (
-          <Agent state={state} onOpenMeeting={openMeeting} onOpenTasks={() => goToSection('tasks')} />
+          <Agent
+            state={state}
+            workspace={workspace}
+            onOpenMeeting={openMeeting}
+            onOpenAccess={() => openSettings('agent')}
+            onOpenTasks={() => goToSection('tasks')}
+          />
         ) : section === 'settings' ? (
           <Settings
             state={state}
@@ -472,6 +490,23 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* An agent nobody has met yet. Shown once per workspace, and only when
+          you are actually looking at that workspace's rooms — interrupting
+          somebody mid-settings to introduce an agent is worse than waiting. */}
+      {workspace &&
+      !workspace.agent.introduced &&
+      !metAgents.includes(workspace.workspace.id) &&
+      !searching &&
+      section === 'chat' ? (
+        <NewAgentDialog
+          workspace={workspace}
+          // Dismissal is tracked here as well as persisted, so a failed write
+          // cannot trap somebody behind a modal they have already answered.
+          onClose={() => setMetAgents((prev) => [...prev, workspace.workspace.id])}
+          onOpenAccess={() => openSettings('agent')}
+        />
+      ) : null}
 
       {switcher ? (
         <QuickSwitcher

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 
 import type { AppState } from '../lib/api.js';
+import { Icon } from '../components/icons.js';
 import { Avatar } from '../components/ui.js';
 
 interface Props {
@@ -38,7 +39,7 @@ export default function Agents({ state, onOpenConversation, onOpenProfile, onInv
 
   return (
     <>
-      <h1>Agents</h1>
+      <h1>People</h1>
       <p className="subtitle">
         Everyone in <strong>{workspace?.workspace.name ?? 'this workspace'}</strong>, and whether
         their agent is reachable. You talk to your agent; your agent talks to theirs.
@@ -51,7 +52,7 @@ export default function Agents({ state, onOpenConversation, onOpenProfile, onInv
           onChange={(e) => setQuery(e.target.value)}
         />
         <button style={{ flex: '0 0 auto' }} onClick={onInvite}>
-          Invite someone
+          <Icon name="plus" size={14} /> Invite someone
         </button>
       </div>
 
@@ -71,6 +72,7 @@ export default function Agents({ state, onOpenConversation, onOpenProfile, onInv
                   address={person.address}
                   size={38}
                   presence={person.presence}
+                  image={person.avatar}
                 />
                 <div>
                   <button className="card-title link" onClick={() => onOpenProfile(person.address)}>
@@ -99,7 +101,7 @@ export default function Agents({ state, onOpenConversation, onOpenProfile, onInv
             </div>
             <div style={{ marginTop: 10 }}>
               <button className="primary" onClick={() => onOpenConversation(person.address)}>
-                Open the conversation
+                <Icon name="envelope" size={14} /> Open the conversation
               </button>
               <span className="hint" style={{ marginLeft: 10 }}>
                 Press <strong>Meet</strong> in there to have your agents sit down together.

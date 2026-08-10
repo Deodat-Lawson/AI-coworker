@@ -7,6 +7,7 @@ import MessageList, { type MeetingLens, type MessageListActions } from '../compo
 import type { MentionContext } from '../components/RichText.js';
 import RichText from '../components/RichText.js';
 import StartMeetingDialog from '../components/StartMeetingDialog.js';
+import { Icon, channelIcon } from '../components/icons.js';
 import { Avatar } from '../components/ui.js';
 import { api, unwrap, type AppState, type WorkspaceView } from '../lib/api.js';
 import { nameOf, plural, timeOf } from '../lib/format.js';
@@ -194,13 +195,17 @@ export default function Chat({
                     square
                   />
                 ) : (
-                  <span className="chat-glyph">👥</span>
+                  <Icon name="people" size={18} className="chat-glyph" />
                 )}
                 {view.label}
               </>
             ) : (
               <>
-                <span className="chat-glyph">{channel.kind === 'private' ? '🔒' : '#'}</span>
+                <Icon
+                  name={channelIcon(channel.kind, Boolean(channel.meetingId))}
+                  size={18}
+                  className="chat-glyph"
+                />
                 {channel.name}
               </>
             )}
@@ -210,8 +215,8 @@ export default function Chat({
           <div className="chat-head-meta">
             {channel.topic ? <span className="chat-topic">{channel.topic}</span> : null}
             {pinned.length ? (
-              <button className="ghost" onClick={() => setShowPinned((v) => !v)}>
-                📌 {pinned.length}
+              <button className="ghost" onClick={() => setShowPinned((v) => !v)} title="Pinned messages">
+                <Icon name="pin" size={14} /> {pinned.length}
               </button>
             ) : null}
             <button className="ghost members-chip" onClick={onChannelDetails} title="Members">
@@ -237,7 +242,7 @@ export default function Chat({
                 onClick={() => setBooking(true)}
                 title="Have the agents in this channel meet, here"
               >
-                ◷ Meet
+                <Icon name="meeting" size={14} /> Meet
               </button>
             )}
           </div>
@@ -385,7 +390,7 @@ function ChannelIntro({ view, workspace }: { view: WorkspaceView['channels'][num
   return (
     <div className="chat-intro">
       <h2>
-        {channel.kind === 'private' ? '🔒' : '#'}
+        <Icon name={channelIcon(channel.kind)} size={14} />
         {channel.name}
       </h2>
       <p className="subtitle">
@@ -439,7 +444,7 @@ function ThreadPanel({
           onClick={() => void api.openThread(workspace.workspace.id, thread.channelId, null)}
           aria-label="Close thread"
         >
-          ✕
+          <Icon name="close" size={15} />
         </button>
       </header>
 

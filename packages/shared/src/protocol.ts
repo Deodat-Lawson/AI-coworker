@@ -94,6 +94,8 @@ export interface WorkspaceCreateMessage {
   slug?: string;
   description?: string;
   icon?: string;
+  /** An uploaded square image, as a data URI. Checked against ICON_MAX_BYTES. */
+  iconImage?: string;
   color?: string;
   discoverable?: boolean;
   /** Extra channels to create alongside #general. */
@@ -198,6 +200,12 @@ export interface WorkspaceProfileMessage {
   address?: AgentAddress;
   displayName?: string;
   title?: string;
+  /**
+   * An uploaded square image, as a data URI, or '' to go back to initials.
+   * Same ceiling as a workspace icon, and checked the same way: this rides in
+   * the member list every member of the workspace holds.
+   */
+  avatar?: string;
 }
 
 // --- join requests ---------------------------------------------------------

@@ -158,12 +158,68 @@ owns it; everybody after that joins as a member. From there:
 | **Audit log** | Every administrative act — role changes, deactivations, permission edits, invitations — kept on the relay and readable by admins. |
 | **Presence and status** | Active / away / do-not-disturb, plus a custom emoji and message with an optional expiry. |
 | **Notifications** | Per channel and per workspace, with mute, DND, and a dock badge for mentions. What you silence is stored locally; the relay is never told. |
-| **Settings** | One screen for the whole app: you and your agent, availability, the knowledge base, sources, notifications, the workspace, its members and channels, and the network. There is no second place to look. |
+| **Settings** | One screen for the whole app, in three scopes: everywhere (brain, network, appearance, shortcuts), you (profile, availability, knowledge base, imported memory), and this workspace (its agent and access, notifications, sidebar, the workspace itself, members, channels). There is no second place to look. |
 | **Getting around** | `⌘K` quick switcher, `⌘F` search, `⌥⇧↑`/`⌥⇧↓` through unreads, `⌘⇧D` your agent, `⌘⇧K` your to-do list, `⌘,` settings, `⌘/` for the rest. |
 
 Your agent can work the same surface on your behalf — ask it to
 `catch me up`, `read #auth-migration`, `post to #billing`, or
 `invite sarah to the workspace`, and it uses the same protocol the UI does.
+
+### Making it yours
+
+The sidebar is arranged by the person, not the app. Sections you name, channels
+you drag between them, an order you chose, a density, and "show only unread" —
+all stored **as a diff from the default layout**, so a channel created tomorrow
+still lands somewhere sensible instead of vanishing because it was not in a list
+written last week. Right-click anything: a channel to star, mute, file or leave
+it; a section to rename, collapse, reorder or delete it.
+
+A workspace can carry an uploaded icon as well as an emoji, and you can carry a
+picture of your own — both squared off, resized to 128px and re-encoded in the
+app, then checked again on the relay, because those records are replicated to
+every member. Your picture is per workspace, like your display name: a
+photograph at work and a cartoon in a side project is a reasonable thing to
+want. Its colour is not decoration
+either: the whole accent family is derived from it, so switching workspaces
+looks like moving somewhere else, and the text riding on a filled button is
+picked by contrast rather than assumed (a test checks every offered colour
+clears 4.5:1 in both themes).
+
+## One agent per workspace
+
+You have one knowledge base and one machine. You do **not** have one agent.
+
+The agent in a client's workspace and the one in your employer's are different
+agents: different names, different standing orders, and — the part that matters
+— different reach into the machine they both run on. A workspace agent is
+created the moment you join, stored on your own machine, and starts with
+**nothing**: no imported memory, no folders, no coding tool. Everything it can
+reach, you granted it deliberately, for that workspace alone.
+
+```
+Acme ─ "Ada"      watching only   · Claude Code memory · /work/acme     · internal
+Home ─ "your agent" acts for you  · nothing imported   · no folders     · confidential
+```
+
+| | |
+|---|---|
+| **Identity** | Name, glyph and colour per workspace, drawn on the workspace tile — so two agents are visibly not the same actor. |
+| **Autonomy** | Watch only, ask first, or act for you. Watching only holds off everything that puts something into the world, however the individual switches are set. |
+| **Instructions** | Standing orders for this workspace, on top of your machine-wide ones — or instead of them, if you switch inheritance off. |
+| **Capabilities** | Named switches for reading the workspace, meeting, holding calendar time, accepting work, reading and writing your knowledge base, recalling imported memory, and reaching Claude Code, Codex or granted folders. Only switches the runtime actually honours are shown, and a test enforces that. |
+| **Sources** | Nothing, chosen sources, or everything imported. A source granted here is not granted next door, and switching a tool off covers every source of that kind whether or not it was granted. |
+| **Ceiling** | Nothing above a chosen sensitivity is *loaded* in this workspace — not withheld politely, not in the room. `secret` never leaves the machine in any workspace. |
+| **Folders** | Absolute paths, matched with a separator guard, so a grant for `/work/acme` never reaches `/work/acme-secrets`. |
+| **Isolation** | A panel listing your other agents and what each reaches, and calling out any overlap — because "are these actually separate?" deserves evidence, not a promise. |
+
+Leaving a workspace takes its agent and its grants with it: rejoining later
+starts closed again rather than quietly restoring reach nobody re-approved.
+
+The gates are in the runtime, not the screen. Recall is filtered inside the
+memory index before the audience decision runs; the knowledge digest is empty
+for an agent that was not granted it; the `recall_memory` tool refuses up front
+and says which setting would change that. `tests/agent-isolation.test.mjs` drives
+all of it end to end.
 
 ## Your to-do list
 
@@ -172,8 +228,8 @@ nobody keeps. So the work lands somewhere real: a to-do list of the shape
 everybody already uses, at `⌘⇧K`.
 
 It is a **to-do list first** — you can run it with the network off and no
-workspace at all — and it happens to be the place your agent puts what it agreed
-to on your behalf.
+workspace at all — and it happens to be the place your agents put what they
+agreed to on your behalf.
 
 ### The add box understands what you type
 
@@ -190,29 +246,30 @@ Pay rent every month on the 1st at 9am p1 #Home @money
 |---|---|
 | **Dates** | `today`, `tonight`, `tomorrow`, `friday`, `next friday`, `in 3 days`, `end of month`, `5 jan`, `2026-12-01`, `12/25` |
 | **Times** | `at 5pm`, `17:00`, `5:30pm`, `noon`, `midnight`, `this evening` — a bare time means the next time it comes round |
-| **Repeats** | `every day`, `every weekday`, `every monday and thursday`, `every other week`, `every 3 months`, `weekly`, `annually` — and `every!` to count from when you actually finish it |
+| **Repeats** | `every day`, `every weekday`, `every monday and thursday`, `every other tuesday`, `every 3 months`, `weekly`, `annually` — and `every!` to count from when you actually finish it |
 | **Priority** | `p1`–`p4`, or `!!1` |
 | **Filing** | `#List` (made on the spot if it does not exist) and `@label`, both with autocomplete |
 
 Anything it understands is lifted out of the title, so what is left is the thing
 you actually have to do. Anything it does not understand simply stays in the
-title — it never guesses, and it never refuses a line.
+title — it never guesses, and it never refuses a line. `me@example.com` is an
+address, "Call Tom" is a person, and neither becomes a date.
 
-Your agent uses **the same parser**, so "add pay rent on the 1st, every month,
-p1" in the agent chat and typing it into the box produce the same task.
+Your agents use **the same parser**, so "add pay rent on the 1st, every month,
+p1" in an agent chat and typing it into the box produce the same task.
 
 ### The rest of it
 
 | | |
 |---|---|
-| **Views** | Inbox, Today (with everything late pulled to the top), Upcoming as a run of days, All, and a Completed log you can restore from. |
+| **Views** | Inbox, Today (with everything late pulled to the top, and one click to move it), Upcoming as a run of days, All, and a Completed log you can restore from. |
 | **Lists** | With an emoji and a colour, cut into sections. Deleting a list never deletes work — its tasks fall back to the Inbox unless you say otherwise. |
 | **A task** | Notes, a checklist, labels, priority, due date with or without a time, a reminder, and a repeat. |
-| **Repeating** | Ticking one off does not finish it: it moves to its next date, resets its checklist, and carries its reminder with it. A backlog is skipped rather than landed in the past. |
-| **Reminders** | A real desktop notification, raised by the app itself. Click it and the task opens. |
+| **Repeating** | Ticking one off does not finish it: it moves to its next date, resets its checklist, and carries its reminder with it. A backlog is skipped rather than landed in the past, and a bill due on the 31st stays on the 31st through February. |
+| **Reminders** | A real desktop notification, raised by the app itself. Click it and the task opens. One you have seen does not come back on the next launch. |
 | **Rearranging** | Drag to reorder, drag onto a list in the rail to file, drag onto a day in Upcoming to reschedule. Sort by your own order, date, priority, age or name; group by date, priority, list or label. |
-| **In bulk** | `⌘`-click or `⇧`-click to select several, then schedule, prioritise, move, complete or delete the lot. |
-| **Undo** | Every completion, change and deletion is undoable — `⌘Z`, or the button that appears. |
+| **In bulk** | `⌘`-click or `⇧`-click to select several, then schedule, prioritise, move, complete or delete the lot — as one act, so one undo takes it back. |
+| **Undo** | Every completion, change and deletion is undoable — `⌘Z`, or the button that appears. It restores rather than patches, so it can take back a date you added as well as one you removed. |
 | **Keyboard** | `A` add · `↑`/`↓` move · `Enter` open · `C` complete · `X` select · `1`–`4` priority · `T`/`M`/`W` today, tomorrow, next week · `R` no date · `⌫` delete · `/` filter. |
 
 ### Where the work comes from
@@ -220,17 +277,17 @@ p1" in the agent chat and typing it into the box produce the same task.
 This is the part a general to-do app cannot have. A task remembers where it came
 from, and can take you back:
 
-- **From a meeting.** Work your agent accepted in a room lands here with what
-  was agreed as acceptance criteria, and — if your agent pushed back — the
-  reason it gave, in the task.
+- **From a meeting.** Work an agent accepted in a room lands here with what was
+  agreed as acceptance criteria, and — if it pushed back — the reason it gave,
+  in the task.
 - **From a message.** Any message in any channel has *Add to my tasks*, which
   keeps a link to the moment somebody asked.
-- **From your agent.** `add "renew the certs" for friday p1`, `what's on today?`,
-  `I finished the auth PR` — it has tools for all of it, and it ticks things off
-  rather than writing notes about them.
+- **From an agent.** `add "renew the certs" for friday p1`, `what's on today?`,
+  `I finished the auth PR` — they have tools for all of it, and they tick things
+  off rather than writing notes about them.
 
 Tasks live in your knowledge base (`db.json`), not on the relay. Nobody else can
-see your to-do list.
+see your to-do list, and it is the same list whichever workspace you are in.
 
 ## A meeting room is a channel
 
@@ -302,9 +359,10 @@ packages/
              holds the markdown engine, the editor, the graph and the canvas
 docs/        how sources and sharing work
 tests/       protocol, moderator, knowledge base, workspaces, member and
-             permission management, accounts and registration, themes and
-             contrast, markup, memory, recall, access, vault, markdown, the
-             to-do list (its parser, its dates and its store), and a full
+             permission management, per-workspace agents and their isolation,
+             sidebar layout, workspace icons, accounts and registration, themes,
+             accent contrast, markup, memory, recall, access, vault, markdown,
+             the to-do list (its parser, its dates and its store), and a full
              3-agent meeting
 scripts/     the five-person demo, and the icon generator
 brand/       the mark, as vector — regenerate, don't hand-edit
@@ -321,7 +379,9 @@ db.json          projects, artifacts, your to-do list and its lists, calendar,
 notes/           your vault — markdown, folders, attachments, .obsidian/ config
 meetings/*.json  transcripts and your own briefings
 memory/          what your other agents already knew, imported and classified
-client.json      which relays to dial, drafts, per-channel notification choices
+client.json      which relays to dial, drafts, per-channel notification choices,
+                 your sidebar layout, and one agent per workspace with what it
+                 was granted — none of which the relay ever sees
 ```
 
 `notes/` is a real Obsidian vault. Point Obsidian at it and everything is where
@@ -457,19 +517,20 @@ reinstall undoes it and the next launch redoes it; nothing shipped depends on it
 ## Status
 
 Working end to end: multi-workspace messaging with channels, DMs, threads,
-reactions, unreads, search and invitations; scheduling negotiation; the full
-meeting state machine; grounded artifact sharing; assignment and pushback;
-per-person briefings; the to-do list, with natural-language capture, repeats and
-reminders; the vault and its editor; the desktop app; and packaging config for
-all three platforms.
+reactions, unreads, search and invitations; one gated agent per workspace, with
+its grants enforced in the runtime rather than the screen; a sidebar the person
+arranges; scheduling negotiation; the full meeting state machine; grounded
+artifact sharing; assignment and pushback; per-person briefings; the to-do list,
+with natural-language capture, repeats and reminders; the vault and its editor;
+the desktop app; and packaging config for all three platforms.
 
 Known limits: everybody has to be online for their agents to negotiate a time.
 The relay persists workspaces, channels and message history
 (`.relay-workspaces.json`), accounts and sessions (`.relay-accounts.json`, mode
 `0600`), plus the meeting schedule (`.relay-state.json`); meeting transcripts and
 briefings live only on the participants' machines, which is the intent. Message
-history is capped per channel rather than archived, and there are no file
-uploads. Confirmation codes are printed to the relay's log rather than emailed
+history is capped per channel rather than archived, and the only thing you can
+upload is a workspace icon — messages carry no attachments yet. Confirmation codes are printed to the relay's log rather than emailed
 until you give it a mail transport — deliberate, so a relay you start for your
 own team works immediately, but it does mean anybody who can read that log can
 sign in as anybody.

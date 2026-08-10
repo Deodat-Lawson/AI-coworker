@@ -2042,8 +2042,8 @@ h2:first-of-type {
 .menu-item {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  justify-content: flex-start;
+  gap: 9px;
   width: 100%;
   border: none;
   background: transparent;
@@ -2064,6 +2064,7 @@ h2:first-of-type {
   background: var(--bad-tint-mid);
 }
 .menu-hint {
+  margin-left: auto;
   color: var(--text-faint);
   font-size: 11px;
   font-family: var(--mono);
@@ -3137,6 +3138,754 @@ button.linkish:hover:not(:disabled) {
   color: var(--text-dim);
   font-size: 12.5px;
   white-space: nowrap;
+}
+
+/* =========================================================================
+   Icons
+   -------------------------------------------------------------------------
+   One stroke weight, one grid, `currentColor` throughout. The rules here are
+   about *placement* only — an icon that has to be told what colour to be is an
+   icon that will be the wrong colour in the next context it lands in.
+   ========================================================================= */
+
+.icon {
+  flex-shrink: 0;
+  display: block;
+  /* Optical, not metric: a 24-grid glyph sits a hair high against text. */
+  vertical-align: -0.125em;
+}
+
+/* --- context menus -------------------------------------------------------- */
+
+/* Right-clicking anything opens one of these where the pointer is. Fixed, not
+   absolute: it must escape whatever scroll container it was summoned from. */
+.context-menu {
+  position: fixed;
+  z-index: 200;
+  min-width: 210px;
+  max-width: 280px;
+  padding: 5px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+.menu-label {
+  padding: 6px 10px 5px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.menu-icon {
+  width: 15px;
+  flex-shrink: 0;
+  color: var(--text-faint);
+}
+.menu-item:hover:not(:disabled) .menu-icon {
+  color: inherit;
+}
+.menu-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.menu-check {
+  color: var(--accent);
+}
+
+/* --- a sidebar somebody arranged ------------------------------------------ */
+
+.ws-glyph {
+  font-size: 15px;
+  line-height: 1;
+}
+.ws-glyph-img {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.ws-name-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ws-caret {
+  color: var(--text-faint);
+}
+
+.side-group-emoji {
+  font-size: 11px;
+  opacity: 0.85;
+}
+.side-group-count {
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text-faint);
+  font-size: 10.5px;
+}
+.side-group-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+.side-group:hover .side-group-actions,
+.side-group-actions:focus-within {
+  opacity: 1;
+}
+.side-group-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
+}
+.side-rename {
+  flex: 1;
+  padding: 3px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  height: auto;
+}
+.side-empty {
+  padding: 5px 10px 7px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.side-star {
+  color: var(--warn);
+  flex-shrink: 0;
+}
+.side-done {
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+.new-section {
+  margin: 2px 8px 16px;
+  width: calc(100% - 16px);
+}
+
+/* Dragging a channel between sections. The row being dragged stays visible but
+   recedes; the gap it would land in is drawn as a rule rather than a hole, so
+   the list never jumps under the pointer. */
+.side-row.dragging {
+  opacity: 0.4;
+}
+.side-row.drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+.side-group.drop-target {
+  background: var(--accent-tint-soft);
+  border-radius: 8px;
+}
+
+/* Compact drops a row from 28px to 24px — about a third more channels on a
+   laptop, which is the difference between scrolling and not. */
+.sidebar.density-compact .side-row {
+  padding: 2px 8px;
+  font-size: 13.5px;
+}
+.sidebar.density-compact .side-group {
+  padding: 3px 8px;
+}
+.sidebar.density-compact .side-group-head {
+  padding: 2px 6px 1px;
+}
+
+/* =========================================================================
+   The agent in one workspace
+   -------------------------------------------------------------------------
+   This screen is a list of grants, so its job is to make the *state* of each
+   one legible at a glance: on or off, safe or sensitive, granted here or
+   somewhere else. Everything below serves that and nothing else.
+   ========================================================================= */
+
+.agent-identity {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  margin-bottom: 22px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.agent-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 15px;
+  border: 1.5px solid var(--border-strong);
+  font-size: 24px;
+  line-height: 1;
+}
+.agent-identity-body {
+  min-width: 0;
+}
+.agent-name-input {
+  width: 100%;
+  padding: 2px 6px;
+  margin: -2px -6px 2px;
+  font-size: 19px;
+  font-weight: 700;
+  height: auto;
+  background: transparent;
+  border-color: transparent;
+}
+.agent-name-input:hover:not(:focus) {
+  border-color: var(--border);
+}
+.agent-reach {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.agent-look {
+  grid-column: 1 / -1;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-soft);
+}
+
+/* --- a row of mutually exclusive cards ------------------------------------ */
+
+.choice-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.choice-card {
+  display: block;
+  text-align: left;
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+}
+.choice-card:hover:not(:disabled) {
+  border-color: var(--border-stronger);
+  background: var(--bg-elevated);
+}
+.choice-card.on {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+}
+.choice-card.small {
+  padding: 10px 12px;
+}
+.choice-icon {
+  color: var(--text-faint);
+  margin-bottom: 8px;
+}
+.choice-card.on .choice-icon {
+  color: var(--accent);
+}
+.choice-title {
+  font-weight: 650;
+  font-size: 14px;
+  margin-bottom: 3px;
+}
+.choice-blurb {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+/* --- switches ------------------------------------------------------------- */
+
+/* A checkbox says "is this ticked". A switch says "is this on right now",
+   which is the only question this screen is asking. */
+.switch {
+  flex-shrink: 0;
+  position: relative;
+  width: 38px;
+  height: 22px;
+  padding: 0;
+  border-radius: 11px;
+  border: 1px solid var(--border-stronger);
+  background: var(--bg-input);
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+.switch.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.switch:disabled {
+  opacity: 0.45;
+}
+.switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  transition: transform 0.14s ease, background 0.14s ease;
+}
+.switch.on .switch-knob {
+  transform: translateX(16px);
+  background: var(--text-on-accent);
+}
+
+.switch-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 4px;
+}
+.switch-row + .switch-row {
+  border-top: 1px solid var(--border-soft);
+}
+.switch-icon {
+  color: var(--text-faint);
+}
+.switch-row.on .switch-icon {
+  color: var(--accent);
+}
+.switch-text {
+  min-width: 0;
+}
+.switch-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.switch-blurb {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+/* --- the sensitivity ceiling ---------------------------------------------- */
+
+/* Drawn as a rising staircase rather than a dropdown: the levels are ordered,
+   and a control that hides that ordering makes people guess at it. */
+.ceiling {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+}
+.ceiling-step {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 6px 4px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+}
+.ceiling-step:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: transparent;
+}
+.ceiling-bar {
+  display: block;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--bg-input);
+}
+.ceiling-step:nth-child(1) .ceiling-bar { height: 10px; }
+.ceiling-step:nth-child(2) .ceiling-bar { height: 16px; }
+.ceiling-step:nth-child(3) .ceiling-bar { height: 22px; }
+.ceiling-step:nth-child(4) .ceiling-bar { height: 28px; }
+.ceiling-step.filled .ceiling-bar {
+  background: var(--accent);
+}
+.ceiling-step.current .ceiling-bar {
+  box-shadow: 0 0 0 2px var(--accent-tint-max);
+}
+.ceiling-label {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  text-align: center;
+}
+.ceiling-step.current .ceiling-label {
+  color: var(--text);
+  font-weight: 650;
+}
+
+/* --- connectors ----------------------------------------------------------- */
+
+.grant-heading {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  margin: 22px 0 10px;
+}
+.grant-modes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.connector-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: 10px;
+}
+.connector-card {
+  padding: 12px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+}
+.connector-card.granted {
+  border-color: var(--accent-border);
+  background: var(--accent-tint-soft);
+}
+.connector-card.offer {
+  border-style: dashed;
+}
+.connector-head {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+}
+.connector-tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: var(--bg-input);
+  color: var(--text-dim);
+}
+.connector-card.granted .connector-tile {
+  background: var(--accent-tint-hi);
+  color: var(--accent);
+}
+.connector-title {
+  min-width: 0;
+}
+.connector-name {
+  font-weight: 650;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.connector-sub {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.connector-path {
+  margin-top: 9px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
+.folder-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+}
+.folder-row + .folder-row {
+  border-top: 1px solid var(--border-soft);
+}
+.folder-icon {
+  color: var(--text-faint);
+}
+.folder-path {
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
+/* --- what the other agents reach ------------------------------------------ */
+
+.isolation-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 2px;
+}
+.isolation-row + .isolation-row {
+  border-top: 1px solid var(--border-soft);
+}
+.isolation-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  border: 1.5px solid var(--border-strong);
+  font-size: 15px;
+}
+.isolation-text {
+  min-width: 0;
+}
+.isolation-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+.isolation-where {
+  font-weight: 400;
+  color: var(--text-faint);
+}
+.isolation-reach {
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+
+.banner.good {
+  border-color: var(--good-border);
+  background: var(--good-tint-soft);
+}
+/* A banner with an icon reads as one object: the icon belongs to the text, not
+   to the edge of the box. */
+.banner > .icon {
+  align-self: flex-start;
+  margin-top: 2px;
+  color: var(--text-dim);
+}
+.banner.warn > .icon {
+  color: var(--warn);
+}
+.banner.good > .icon {
+  color: var(--good);
+}
+
+.card.tight {
+  padding: 6px 14px;
+}
+
+/* --- workspace icon upload ------------------------------------------------ */
+
+.icon-upload {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 14px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.icon-drop {
+  border: 1.5px dashed var(--border-strong);
+  border-radius: 16px;
+  padding: 6px;
+  line-height: 0;
+}
+.icon-drop.over {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+}
+.icon-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
+  object-fit: cover;
+}
+.icon-preview.placeholder {
+  font-size: 24px;
+  color: var(--text-on-solid);
+  line-height: 1;
+}
+.icon-upload-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.icon-upload .hint,
+.icon-upload .error-text {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+/* --- sections, as a settings list ----------------------------------------- */
+
+.section-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 2px;
+}
+.section-row + .section-row {
+  border-top: 1px solid var(--border-soft);
+}
+.section-emoji {
+  width: 22px;
+  text-align: center;
+  color: var(--text-dim);
+}
+.section-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+.section-sub {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.settings-rail-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.settings-rail-icon {
+  color: var(--text-faint);
+}
+.settings-rail-item.active .settings-rail-icon {
+  color: var(--accent);
+}
+
+/* --- the rail, with uploaded icons and the agent that lives there ---------- */
+
+.rail-img {
+  width: 100%;
+  height: 100%;
+  border-radius: 12px;
+  object-fit: cover;
+}
+/* A small mark on the corner of the workspace tile: which agent is in there.
+   Two tiles side by side is the plainest way the app can say that the agent at
+   work and the agent at the client are not the same actor. */
+.rail-agent {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  border-radius: 6px;
+  border: 2px solid var(--rail);
+  font-size: 9px;
+  line-height: 1;
+  color: var(--text-on-solid);
+}
+
+/* --- the agent conversation ----------------------------------------------- */
+
+.agent-chip {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  border: 1px solid var(--border-strong);
+  font-size: 12px;
+  line-height: 1;
+}
+.chat-title-where {
+  font-weight: 400;
+  color: var(--text-faint);
+  font-size: 13px;
+}
+
+/* The one nudge this app gets to make: an agent granted nothing cannot help
+   with anything on your machine, and saying so once beats silence. */
+.reach-strip {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 16px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--accent-tint-soft);
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: left;
+}
+.reach-strip:hover:not(:disabled) {
+  background: var(--accent-tint);
+  border-color: var(--border);
+  color: var(--text);
+}
+.reach-strip strong {
+  color: var(--text);
+}
+
+.suggestion {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.panel h2 .icon,
+.settings-pane h2 .icon {
+  color: var(--text-faint);
+  display: inline-block;
+  vertical-align: -0.15em;
+  margin-right: 6px;
+}
+
+/* --- meeting a new workspace's agent --------------------------------------- */
+
+.agent-intro {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.agent-avatar.large {
+  width: 64px;
+  height: 64px;
+  border-radius: 19px;
+  font-size: 30px;
+}
+
+/* Which workspace agents may recall one source. A row of workspaces rather
+   than a count, because the answer people want is "which ones", and the answer
+   is usually short. */
+.grant-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 11px;
+  border-top: 1px solid var(--border-soft);
+}
+.grant-strip-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  margin-right: 4px;
 }
 
 /* =========================================================================
@@ -4256,8 +5005,8 @@ button.linkish:hover:not(:disabled) {
 }
 
 .list-form {
-  padding: 10px;
-  width: 252px;
+  /* No padding or width of its own: it sits inside a modal that has both. */
+  max-width: 320px;
 }
 .list-form-row {
   display: flex;
@@ -4423,13 +5172,6 @@ button.task-due.none:focus-visible {
   opacity: 1;
   outline: 2px solid var(--focus-border);
   outline-offset: 1px;
-}
-.list-form {
-  padding: 0;
-  width: auto;
-}
-.list-form {
-  max-width: 320px;
 }
 .list-form .swatches {
   justify-items: start;

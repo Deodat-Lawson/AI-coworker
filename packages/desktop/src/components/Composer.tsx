@@ -4,6 +4,7 @@ import { handleFor, searchEmoji } from '@ai-coworker/shared';
 import type { Channel, WorkspaceMember } from '@ai-coworker/shared';
 
 import { api } from '../lib/api.js';
+import { Icon, channelIcon } from './icons.js';
 import { Avatar, EmojiPicker } from './ui.js';
 
 interface Props {
@@ -213,13 +214,18 @@ export default function Composer({
                     address={suggestion.member.address}
                     size={20}
                     square
+                    image={suggestion.member.avatar}
                   />
                   <span className="ac-name">{suggestion.member.displayName}</span>
                   <span className="ac-hint">@{handleFor(suggestion.member.address)}</span>
                 </>
               ) : suggestion.kind === 'channel' ? (
                 <>
-                  <span className="ac-icon">{suggestion.channel.kind === 'private' ? '🔒' : '#'}</span>
+                  <Icon
+                    name={channelIcon(suggestion.channel.kind)}
+                    size={15}
+                    className="ac-icon"
+                  />
                   <span className="ac-name">{suggestion.channel.name}</span>
                   <span className="ac-hint">{suggestion.channel.topic}</span>
                 </>
@@ -264,14 +270,14 @@ export default function Composer({
               {'</>'}
             </button>
             <button className="tool" title="Code block" onClick={() => wrap('```\n', '\n```')}>
-              ▤
+              <Icon name="terminal" size={15} />
             </button>
             <button className="tool" title="Quote" onClick={() => update(`${text}${text ? '\n' : ''}> `)}>
               ❝
             </button>
             <span className="tool-sep" />
             <button className="tool" title="Emoji" onClick={() => setPicker(true)}>
-              ☺
+              <Icon name="emoji" size={15} />
             </button>
             <button
               className="tool"
@@ -298,7 +304,7 @@ export default function Composer({
             {extra}
             <span className="composer-hint">Enter to send · Shift+Enter for a new line</span>
             <button className="primary" disabled={!text.trim()} onClick={send}>
-              Send
+              <Icon name="send" size={14} /> Send
             </button>
           </div>
         </div>

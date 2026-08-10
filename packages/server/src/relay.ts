@@ -349,6 +349,7 @@ export class Relay extends EventEmitter {
           address: message.address,
           displayName: message.displayName,
           title: message.title,
+          avatar: message.avatar,
         });
         break;
 

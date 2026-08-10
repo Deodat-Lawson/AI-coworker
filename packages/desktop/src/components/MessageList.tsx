@@ -3,8 +3,9 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ArtifactRef, Message, WorkspaceMember } from '@ai-coworker/shared';
 
 import { dayLabel, plural, sameDay, timeOf } from '../lib/format.js';
+import { Icon } from './icons.js';
 import RichText, { type MentionContext } from './RichText.js';
-import { Avatar, EmojiPicker, Popover, QuickReactions } from './ui.js';
+import { Avatar, EmojiPicker, MenuRow, MenuSeparator, Popover, QuickReactions } from './ui.js';
 
 /** Consecutive messages from one person inside this window share a header. */
 const GROUP_WINDOW = 5 * 60_000;
@@ -229,7 +230,11 @@ function MessageRow({
   if (message.deletedAt) {
     return (
       <div className={`msg ${grouped ? 'grouped' : ''} deleted`}>
-        <div className="msg-gutter">{grouped ? null : <Avatar name={name} address={message.author} size={36} />}</div>
+        <div className="msg-gutter">
+          {grouped ? null : (
+            <Avatar name={name} address={message.author} size={36} image={author?.avatar} />
+          )}
+        </div>
         <div className="msg-body">
           {grouped ? null : (
             <div className="msg-head">
@@ -252,7 +257,13 @@ function MessageRow({
         {grouped ? (
           <span className="msg-hover-time">{timeOf(message.ts)}</span>
         ) : (
-          <Avatar name={name} address={message.author} size={36} presence={author?.presence} />
+          <Avatar
+            name={name}
+            address={message.author}
+            size={36}
+            presence={author?.presence}
+            image={author?.avatar}
+          />
         )}
       </div>
       <div className="msg-body">
@@ -351,6 +362,7 @@ function MessageRow({
                     address={address}
                     size={18}
                     square
+                    image={who?.avatar}
                   />
                 );
               })}
@@ -367,7 +379,7 @@ function MessageRow({
         <div className="hover-toolbar">
           <QuickReactions onPick={(emoji) => actions.onReact(message.id, emoji, true)} />
           <button className="hover-action" title="Add a reaction" onClick={() => setPicker(true)}>
-            ☺
+            <Icon name="emoji" size={15} />
           </button>
           {inThread ? null : (
             <button
@@ -375,65 +387,61 @@ function MessageRow({
               title="Reply in thread"
               onClick={() => actions.onOpenThread(message.id)}
             >
-              ⤷
+              <Icon name="reply" size={15} />
             </button>
           )}
           <button className="hover-action" title="More" onClick={() => setMenu(true)}>
-            ⋯
+            <Icon name="more" size={15} />
           </button>
           {menu ? (
             <Popover onClose={() => setMenu(false)} align="right">
               <div className="menu">
-                <button
-                  className="menu-item"
+                <MenuRow
+                  icon="pin"
+                  label={message.pinnedAt ? 'Unpin from channel' : 'Pin to channel'}
                   onClick={() => {
                     actions.onPin(message.id, !message.pinnedAt);
                     setMenu(false);
                   }}
-                >
-                  {message.pinnedAt ? 'Unpin from channel' : 'Pin to channel'}
-                </button>
+                />
                 {actions.onAddToTasks ? (
-                  <button
-                    className="menu-item"
+                  <MenuRow
+                    icon="check"
+                    label="Add to my tasks"
                     onClick={() => {
                       actions.onAddToTasks?.(message);
                       setMenu(false);
                     }}
-                  >
-                    Add to my tasks
-                  </button>
+                  />
                 ) : null}
-                <button
-                  className="menu-item"
+                <MenuRow
+                  icon="copy"
+                  label="Copy text"
                   onClick={() => {
                     void navigator.clipboard?.writeText(message.text);
                     setMenu(false);
                   }}
-                >
-                  Copy text
-                </button>
+                />
                 {mine ? (
                   <>
-                    <div className="menu-sep" />
-                    <button
-                      className="menu-item"
+                    <MenuSeparator />
+                    <MenuRow
+                      icon="edit"
+                      label="Edit message"
                       onClick={() => {
                         onEditing(true);
                         setMenu(false);
                       }}
-                    >
-                      Edit message
-                    </button>
-                    <button
-                      className="menu-item danger"
+                    />
+                    <MenuRow
+                      icon="trash"
+                      label="Delete message"
+                      danger
                       onClick={() => {
                         actions.onDelete(message.id);
                         setMenu(false);
                       }}
-                    >
-                      Delete message
-                    </button>
+                    />
                   </>
                 ) : null}
               </div>
@@ -483,7 +491,7 @@ function MeetingRow({
   return (
     <div className={`msg meeting-row ${meeting?.live ? 'is-live' : ''}`}>
       <div className="msg-gutter">
-        <span className="meeting-glyph">◷</span>
+        <Icon name="meeting" size={17} className="meeting-glyph" />
       </div>
       <div className="msg-body">
         <div className="msg-head">
