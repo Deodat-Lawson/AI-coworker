@@ -7,6 +7,8 @@ interface Props {
   state: AppState;
   /** Jump to a meeting: its channel, with the briefing open beside it. */
   onOpenMeeting: (meetingId: string) => void;
+  /** Work assigned in a meeting lives on the to-do list, not in a second one. */
+  onOpenTasks: () => void;
 }
 
 const SUGGESTIONS = [
@@ -23,7 +25,7 @@ const SUGGESTIONS = [
  * booked, work it accepted on your behalf, questions it could not answer
  * without you — sits beside it.
  */
-export default function Agent({ state, onOpenMeeting }: Props) {
+export default function Agent({ state, onOpenMeeting, onOpenTasks }: Props) {
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -142,13 +144,13 @@ export default function Agent({ state, onOpenMeeting }: Props) {
         </div>
       </div>
 
-      <AgentLedger state={state} onOpenMeeting={onOpenMeeting} />
+      <AgentLedger state={state} onOpenMeeting={onOpenMeeting} onOpenTasks={onOpenTasks} />
     </div>
   );
 }
 
 /** Everything your agent is holding on your behalf, in one column. */
-function AgentLedger({ state, onOpenMeeting }: Props) {
+function AgentLedger({ state, onOpenMeeting, onOpenTasks }: Props) {
   const me = state.profile!.address;
   const openTasks = state.tasks
     .filter((t) => t.assignee === me && t.status !== 'done' && t.status !== 'dropped')
@@ -251,52 +253,39 @@ function AgentLedger({ state, onOpenMeeting }: Props) {
           ))
         )}
 
+        {/* Work your agent took on lands on the same to-do list as everything
+            else, so this is a window onto it rather than a second one. */}
         <h2>Your work</h2>
         {openTasks.length === 0 ? (
-          <div className="empty">No open tasks.</div>
+          <div className="empty">Nothing on your to-do list right now.</div>
         ) : (
-          openTasks.slice(0, 10).map((task) => (
-            <div className="card" key={task.id}>
-              <div className="card-title">{task.title}</div>
-              <div className="card-sub">
-                {task.assignedBy !== me
-                  ? `Assigned by ${nameOf(task.assignedBy, state.directory)}`
-                  : 'Self-assigned'}
-                {task.sourceMeetingId ? ' in a meeting your agent attended' : ''}
-              </div>
-              {task.negotiationNote ? (
-                <div className="card-sub" style={{ color: 'var(--warn)' }}>{task.negotiationNote}</div>
-              ) : null}
-              {task.acceptanceCriteria.length ? (
-                <ul className="checklist">
-                  {task.acceptanceCriteria.map((c, i) => (
-                    <li key={i}>· {c}</li>
-                  ))}
-                </ul>
-              ) : null}
-              <div className="card-meta" style={{ marginTop: 6 }}>
-                <span
-                  className={`tag ${task.status === 'blocked' ? 'bad' : task.status === 'in_progress' ? 'warn' : ''}`}
-                >
-                  {task.status.replace('_', ' ')}
-                </span>
-                {task.dueDate ? ` · ${relative(task.dueDate)}` : ''}
-              </div>
-              <div style={{ marginTop: 8 }}>
-                {(['in_progress', 'blocked', 'done'] as const)
-                  .filter((s) => s !== task.status)
-                  .map((s) => (
-                    <button
-                      key={s}
-                      className="ghost"
-                      onClick={() => void api.saveTask({ id: task.id, title: task.title, status: s })}
-                    >
-                      mark {s.replace('_', ' ')}
-                    </button>
-                  ))}
-              </div>
-            </div>
-          ))
+          <>
+            {openTasks.slice(0, 6).map((task) => (
+              <button className="card clickable full" key={task.id} onClick={onOpenTasks}>
+                <div className="card-title">{task.title}</div>
+                <div className="card-sub">
+                  {task.assignedBy !== me
+                    ? `Assigned by ${nameOf(task.assignedBy, state.directory)}`
+                    : 'Self-assigned'}
+                  {task.sourceMeetingId ? ' in a meeting your agent attended' : ''}
+                </div>
+                {task.negotiationNote ? (
+                  <div className="card-sub" style={{ color: 'var(--warn)' }}>{task.negotiationNote}</div>
+                ) : null}
+                <div className="card-meta" style={{ marginTop: 6 }}>
+                  <span
+                    className={`tag ${task.status === 'blocked' ? 'bad' : task.status === 'in_progress' ? 'warn' : ''}`}
+                  >
+                    {task.status.replace('_', ' ')}
+                  </span>
+                  {task.dueDate ? ` · ${relative(task.dueDate)}` : ''}
+                </div>
+              </button>
+            ))}
+            <button className="ghost" onClick={onOpenTasks}>
+              Open your to-do list{openTasks.length > 6 ? ` · ${openTasks.length} open` : ''} ⌘⇧K
+            </button>
+          </>
         )}
 
         <h2>Latest briefings</h2>

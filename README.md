@@ -159,11 +159,78 @@ owns it; everybody after that joins as a member. From there:
 | **Presence and status** | Active / away / do-not-disturb, plus a custom emoji and message with an optional expiry. |
 | **Notifications** | Per channel and per workspace, with mute, DND, and a dock badge for mentions. What you silence is stored locally; the relay is never told. |
 | **Settings** | One screen for the whole app: you and your agent, availability, the knowledge base, sources, notifications, the workspace, its members and channels, and the network. There is no second place to look. |
-| **Getting around** | `⌘K` quick switcher, `⌘F` search, `⌥⇧↑`/`⌥⇧↓` through unreads, `⌘⇧D` your agent, `⌘,` settings, `⌘/` for the rest. |
+| **Getting around** | `⌘K` quick switcher, `⌘F` search, `⌥⇧↑`/`⌥⇧↓` through unreads, `⌘⇧D` your agent, `⌘⇧K` your to-do list, `⌘,` settings, `⌘/` for the rest. |
 
 Your agent can work the same surface on your behalf — ask it to
 `catch me up`, `read #auth-migration`, `post to #billing`, or
 `invite sarah to the workspace`, and it uses the same protocol the UI does.
+
+## Your to-do list
+
+Meetings end in commitments, and a commitment nobody can see is a commitment
+nobody keeps. So the work lands somewhere real: a to-do list of the shape
+everybody already uses, at `⌘⇧K`.
+
+It is a **to-do list first** — you can run it with the network off and no
+workspace at all — and it happens to be the place your agent puts what it agreed
+to on your behalf.
+
+### The add box understands what you type
+
+One line, parsed as you write it, with what it understood shown underneath
+before you commit to it:
+
+```
+Pay rent every month on the 1st at 9am p1 #Home @money
+└─────┬────┘ └──────┬───────┘  └───┬──┘ └┬┘ └─┬─┘ └──┬─┘
+   the task      repeats         at 9am  P1  list  label
+```
+
+| | |
+|---|---|
+| **Dates** | `today`, `tonight`, `tomorrow`, `friday`, `next friday`, `in 3 days`, `end of month`, `5 jan`, `2026-12-01`, `12/25` |
+| **Times** | `at 5pm`, `17:00`, `5:30pm`, `noon`, `midnight`, `this evening` — a bare time means the next time it comes round |
+| **Repeats** | `every day`, `every weekday`, `every monday and thursday`, `every other week`, `every 3 months`, `weekly`, `annually` — and `every!` to count from when you actually finish it |
+| **Priority** | `p1`–`p4`, or `!!1` |
+| **Filing** | `#List` (made on the spot if it does not exist) and `@label`, both with autocomplete |
+
+Anything it understands is lifted out of the title, so what is left is the thing
+you actually have to do. Anything it does not understand simply stays in the
+title — it never guesses, and it never refuses a line.
+
+Your agent uses **the same parser**, so "add pay rent on the 1st, every month,
+p1" in the agent chat and typing it into the box produce the same task.
+
+### The rest of it
+
+| | |
+|---|---|
+| **Views** | Inbox, Today (with everything late pulled to the top), Upcoming as a run of days, All, and a Completed log you can restore from. |
+| **Lists** | With an emoji and a colour, cut into sections. Deleting a list never deletes work — its tasks fall back to the Inbox unless you say otherwise. |
+| **A task** | Notes, a checklist, labels, priority, due date with or without a time, a reminder, and a repeat. |
+| **Repeating** | Ticking one off does not finish it: it moves to its next date, resets its checklist, and carries its reminder with it. A backlog is skipped rather than landed in the past. |
+| **Reminders** | A real desktop notification, raised by the app itself. Click it and the task opens. |
+| **Rearranging** | Drag to reorder, drag onto a list in the rail to file, drag onto a day in Upcoming to reschedule. Sort by your own order, date, priority, age or name; group by date, priority, list or label. |
+| **In bulk** | `⌘`-click or `⇧`-click to select several, then schedule, prioritise, move, complete or delete the lot. |
+| **Undo** | Every completion, change and deletion is undoable — `⌘Z`, or the button that appears. |
+| **Keyboard** | `A` add · `↑`/`↓` move · `Enter` open · `C` complete · `X` select · `1`–`4` priority · `T`/`M`/`W` today, tomorrow, next week · `R` no date · `⌫` delete · `/` filter. |
+
+### Where the work comes from
+
+This is the part a general to-do app cannot have. A task remembers where it came
+from, and can take you back:
+
+- **From a meeting.** Work your agent accepted in a room lands here with what
+  was agreed as acceptance criteria, and — if your agent pushed back — the
+  reason it gave, in the task.
+- **From a message.** Any message in any channel has *Add to my tasks*, which
+  keeps a link to the moment somebody asked.
+- **From your agent.** `add "renew the certs" for friday p1`, `what's on today?`,
+  `I finished the auth PR` — it has tools for all of it, and it ticks things off
+  rather than writing notes about them.
+
+Tasks live in your knowledge base (`db.json`), not on the relay. Nobody else can
+see your to-do list.
 
 ## A meeting room is a channel
 
@@ -236,8 +303,9 @@ packages/
 docs/        how sources and sharing work
 tests/       protocol, moderator, knowledge base, workspaces, member and
              permission management, accounts and registration, themes and
-             contrast, markup, memory, recall, access, vault, markdown, and a
-             full 3-agent meeting
+             contrast, markup, memory, recall, access, vault, markdown, the
+             to-do list (its parser, its dates and its store), and a full
+             3-agent meeting
 scripts/     the five-person demo, and the icon generator
 brand/       the mark, as vector — regenerate, don't hand-edit
 ```
@@ -248,7 +316,8 @@ Everything an agent knows lives in one folder you can open in any editor:
 
 ```
 profile.json     who you are, your hours, your standing instructions to your agent
-db.json          projects, artifacts, tasks, calendar, feedback
+db.json          projects, artifacts, your to-do list and its lists, calendar,
+                 feedback
 notes/           your vault — markdown, folders, attachments, .obsidian/ config
 meetings/*.json  transcripts and your own briefings
 memory/          what your other agents already knew, imported and classified
@@ -339,7 +408,8 @@ canvas views. It is kept out of `npm test` because it needs a display.
 | `npm run desktop` | Desktop app in dev mode |
 | `npm run demo` | Five-person meeting, end to end |
 | `npm test` | Full suite, offline and deterministic |
-| `npm run test:ui` | End-to-end vault suite in a real window (needs a display) |
+| `npm run test:ui` | End-to-end suite in a real window (needs a display) |
+| `npm run test:ui -- --only "to-do list"` | Just one part of it, by name |
 | `npm run agent -- run --persona sarah` | One headless agent |
 | `npm run agent -- chat --persona sarah --message "book a sync with Dana"` | Talk to an agent from the terminal |
 | `npm run icons` | Regenerate the app icon from vector source |
@@ -389,9 +459,9 @@ reinstall undoes it and the next launch redoes it; nothing shipped depends on it
 Working end to end: multi-workspace messaging with channels, DMs, threads,
 reactions, unreads, search and invitations; scheduling negotiation; the full
 meeting state machine; grounded artifact sharing; assignment and pushback;
-per-person briefings; the vault and its editor; the desktop app; and packaging
-config for all three
-platforms.
+per-person briefings; the to-do list, with natural-language capture, repeats and
+reminders; the vault and its editor; the desktop app; and packaging config for
+all three platforms.
 
 Known limits: everybody has to be online for their agents to negotiate a time.
 The relay persists workspaces, channels and message history

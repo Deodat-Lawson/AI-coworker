@@ -15,6 +15,8 @@ export interface MessageListActions {
   onEdit: (messageId: string, text: string) => void;
   onDelete: (messageId: string) => void;
   onPin: (messageId: string, pinned: boolean) => void;
+  /** Turn something somebody said into a task on your own to-do list. */
+  onAddToTasks?: (message: Message) => void;
   onOpenChannel?: (channelId: string) => void;
   onOpenMember?: (address: string) => void;
   onLoadOlder?: () => void;
@@ -391,6 +393,17 @@ function MessageRow({
                 >
                   {message.pinnedAt ? 'Unpin from channel' : 'Pin to channel'}
                 </button>
+                {actions.onAddToTasks ? (
+                  <button
+                    className="menu-item"
+                    onClick={() => {
+                      actions.onAddToTasks?.(message);
+                      setMenu(false);
+                    }}
+                  >
+                    Add to my tasks
+                  </button>
+                ) : null}
                 <button
                   className="menu-item"
                   onClick={() => {

@@ -27,6 +27,8 @@ import type {
   PublicProfile,
   SearchResults,
   Task,
+  TaskList,
+  TaskSection,
   TranscriptEntry,
   UserStatus,
   VaultSearchHit,
@@ -175,6 +177,9 @@ export interface AppState {
   notes: Note[];
   artifacts: Artifact[];
   tasks: Task[];
+  /** The to-do list's lists, in the order they are shown. */
+  taskLists: TaskList[];
+  taskSections: TaskSection[];
   calendar: CalendarBlock[];
   feedback: Feedback[];
   meetings: MeetingRecord[];
@@ -309,8 +314,26 @@ export interface DesktopApi {
   deleteNote(id: string): Promise<IpcResult>;
   saveArtifact(input: Partial<Artifact> & { title: string }): Promise<IpcResult>;
   deleteArtifact(id: string): Promise<IpcResult>;
-  saveTask(input: Partial<Task> & { title: string }): Promise<IpcResult>;
+  saveTask(input: Partial<Task> & { title: string }): Promise<IpcResult<Task>>;
   deleteTask(id: string): Promise<IpcResult>;
+
+  // --- the to-do list ---
+  /** Tick a task off, or put it back. Repeating tasks move on instead. */
+  completeTask(id: string, done: boolean): Promise<IpcResult>;
+  /** One patch, several tasks — what multi-select acts through. */
+  updateTasks(ids: string[], patch: Partial<Task>): Promise<IpcResult>;
+  deleteTasks(ids: string[]): Promise<IpcResult>;
+  /** Put tasks back exactly as they were — what undo runs through. */
+  restoreTasks(tasks: Task[]): Promise<IpcResult>;
+  restoreTaskLists(lists: TaskList[]): Promise<IpcResult>;
+  reorderTasks(positions: { id: string; order: number }[]): Promise<IpcResult>;
+  saveTaskList(input: Partial<TaskList> & { name: string }): Promise<IpcResult<TaskList>>;
+  deleteTaskList(id: string, deleteTasks?: boolean): Promise<IpcResult>;
+  reorderTaskLists(ids: string[]): Promise<IpcResult>;
+  saveTaskSection(
+    input: Partial<TaskSection> & { listId: string; name: string },
+  ): Promise<IpcResult<TaskSection>>;
+  deleteTaskSection(id: string): Promise<IpcResult>;
   addCalendarBlock(input: { title: string; start: number; end: number; kind?: string }): Promise<IpcResult>;
   removeCalendarBlock(id: string): Promise<IpcResult>;
   setRelayUrl(url: string): Promise<IpcResult>;
@@ -456,6 +479,8 @@ export interface DesktopApi {
   onState(handler: (state: AppState) => void): () => void;
   /** Fired when a notification is clicked, so the app can jump to the message. */
   onOpenChannel(handler: (target: { workspaceId: string; channelId: string }) => void): () => void;
+  /** Fired when a task reminder is clicked, so the app can open it. */
+  onOpenTask(handler: (target: { taskId: string }) => void): () => void;
 
   // --- vault -----------------------------------------------------------------
   vaultState(): Promise<IpcResult<VaultState>>;

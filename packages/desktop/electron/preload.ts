@@ -24,6 +24,17 @@ const api: DesktopApi = {
   deleteArtifact: (id) => ipcRenderer.invoke('artifact:delete', id),
   saveTask: (input) => ipcRenderer.invoke('task:save', input),
   deleteTask: (id) => ipcRenderer.invoke('task:delete', id),
+  completeTask: (id, done) => ipcRenderer.invoke('task:complete', id, done),
+  updateTasks: (ids, patch) => ipcRenderer.invoke('task:updateMany', ids, patch),
+  deleteTasks: (ids) => ipcRenderer.invoke('task:deleteMany', ids),
+  restoreTasks: (tasks) => ipcRenderer.invoke('task:restore', tasks),
+  restoreTaskLists: (lists) => ipcRenderer.invoke('tasklist:restore', lists),
+  reorderTasks: (positions) => ipcRenderer.invoke('task:reorder', positions),
+  saveTaskList: (input) => ipcRenderer.invoke('tasklist:save', input),
+  deleteTaskList: (id, deleteTasks) => ipcRenderer.invoke('tasklist:delete', id, deleteTasks),
+  reorderTaskLists: (ids) => ipcRenderer.invoke('tasklist:reorder', ids),
+  saveTaskSection: (input) => ipcRenderer.invoke('tasksection:save', input),
+  deleteTaskSection: (id) => ipcRenderer.invoke('tasksection:delete', id),
   addCalendarBlock: (input) => ipcRenderer.invoke('calendar:add', input),
   removeCalendarBlock: (id) => ipcRenderer.invoke('calendar:remove', id),
   setRelayUrl: (url) => ipcRenderer.invoke('relay:set', url),
@@ -116,6 +127,11 @@ const api: DesktopApi = {
       handler(target);
     ipcRenderer.on('open-channel', listener);
     return () => ipcRenderer.removeListener('open-channel', listener);
+  },
+  onOpenTask: (handler) => {
+    const listener = (_event: unknown, target: { taskId: string }) => handler(target);
+    ipcRenderer.on('open-task', listener);
+    return () => ipcRenderer.removeListener('open-task', listener);
   },
 
   vaultState: () => ipcRenderer.invoke('vault:state'),

@@ -491,6 +491,12 @@ export async function seedKnowledgeBase(ws: KnowledgeBase, persona: PersonaSeed,
     });
   }
 
+  // Seeded work lands on the to-do list the same way real work does, filed
+  // under a list rather than piling into the Inbox — a demo of a to-do list
+  // with one undifferentiated heap in it is a demo of the wrong thing.
+  const workList =
+    ws.findTaskList('Work') ?? (await ws.upsertTaskList({ name: 'Work', emoji: '💼', color: 'blue' }));
+
   for (const t of persona.tasks) {
     if (ws.tasks.some((x) => x.title === t.title)) continue;
     await ws.upsertTask({
@@ -500,6 +506,8 @@ export async function seedKnowledgeBase(ws: KnowledgeBase, persona: PersonaSeed,
       assignee: persona.profile.address,
       assignedBy: persona.profile.manager ?? persona.profile.address,
       dueDate: t.dueInDays ? now + t.dueInDays * DAY : undefined,
+      dueHasTime: false,
+      listId: workList.id,
       projectId: t.project ? projectIds.get(t.project) : undefined,
       acceptanceCriteria: [],
     });

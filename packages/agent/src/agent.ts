@@ -31,13 +31,20 @@ import {
   DAY,
   HOUR,
   MINUTE,
+  describeRecurrence,
   formatTime,
   freeSlots,
   handleFor,
   id,
   isDirect,
+  isDueToday,
+  isOpen,
+  isOverdue,
+  makeSubtask,
   messagePreview,
+  parseQuickAdd,
   requesterFromProfile,
+  sortTasks,
   truncate,
 } from '@ai-coworker/shared';
 
@@ -1356,40 +1363,82 @@ export class PersonalAgent extends EventEmitter {
       },
       {
         name: 'list_tasks',
-        description: 'List tasks assigned to your human.',
+        description:
+          "Read your human's to-do list. `view` is the usual way in: today is what is due now " +
+          'or already late, inbox is anything unfiled, upcoming is the days ahead.',
         input_schema: {
           type: 'object',
           properties: {
+            view: { type: 'string', enum: ['today', 'inbox', 'upcoming', 'overdue', 'all', 'completed'] },
             status: { type: 'string', enum: ['todo', 'in_progress', 'blocked', 'done', 'dropped', 'open'] },
+            list: str('Only tasks in this list'),
+            label: str('Only tasks carrying this label'),
           },
           required: [],
         },
       },
       {
         name: 'create_task',
-        description: 'Add a task for your human.',
+        description:
+          'Add a task to your human\'s to-do list. Dates go in `due` in plain words — "tomorrow", ' +
+          '"next friday at 3pm", "5 jan" — and repeats go in `repeat` the same way.',
         input_schema: {
           type: 'object',
           properties: {
             title: str('What needs doing'),
             detail: str('Any detail'),
+            due: str('When it is due, in plain words: "tomorrow", "friday 5pm", "in 3 days"'),
             due_in_days: { type: 'integer', description: 'Days from now; 0 for no due date' },
             priority: { type: 'string', enum: ['low', 'normal', 'high', 'urgent'] },
+            list: str('Which list it belongs in; one is created if it does not exist'),
+            labels: { type: 'array', items: { type: 'string' }, description: 'Labels to attach' },
+            repeat: str('How often it repeats: "every week", "every 3 days", "every weekday"'),
+            steps: { type: 'array', items: { type: 'string' }, description: 'A checklist to attach' },
           },
           required: ['title'],
         },
       },
       {
         name: 'update_task',
-        description: 'Change the status of a task. Match it by title text or id.',
+        description:
+          'Change a task. Match it by title text or id, and set only the fields you mean to change.',
         input_schema: {
           type: 'object',
           properties: {
             task: str('Task id or part of its title'),
             status: { type: 'string', enum: ['todo', 'in_progress', 'blocked', 'done', 'dropped'] },
-            note: str('Optional note about the change'),
+            title: str('A new title'),
+            due: str('A new due date in plain words, or "none" to clear it'),
+            priority: { type: 'string', enum: ['low', 'normal', 'high', 'urgent'] },
+            list: str('Move it to this list'),
+            note: str('Optional note to append to the detail'),
           },
-          required: ['task', 'status'],
+          required: ['task'],
+        },
+      },
+      {
+        name: 'complete_task',
+        description:
+          'Tick a task off, or put it back. A repeating task moves to its next date rather than finishing.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            task: str('Task id or part of its title'),
+            done: { type: 'boolean', description: 'False to reopen it' },
+          },
+          required: ['task'],
+        },
+      },
+      {
+        name: 'create_list',
+        description: 'Make a new list on the to-do list, for filing tasks under.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            name: str('What the list is called'),
+            emoji: str('An optional emoji for it'),
+          },
+          required: ['name'],
         },
       },
       {
@@ -1659,6 +1708,49 @@ export class PersonalAgent extends EventEmitter {
     );
   }
 
+  /**
+   * A due date the way the person set it. An all-day task has no time, and
+   * printing midnight for it is both noise and, in another timezone, the wrong
+   * day.
+   */
+  private dueText(task: Task): string {
+    if (!task.dueDate) return '';
+    if (task.dueHasTime) return formatTime(task.dueDate, this.knowledge.profile.timezone);
+    return new Date(task.dueDate).toLocaleDateString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+    });
+  }
+
+  /** Match a task by id, then by exact title, then by a fragment of one. */
+  private findTask(needle: string): Task | undefined {
+    if (!needle) return undefined;
+    const lower = needle.toLowerCase().trim();
+    const mine = this.knowledge.tasks;
+    return (
+      mine.find((t) => t.id === needle) ??
+      mine.find((t) => t.title.toLowerCase() === lower && isOpen(t)) ??
+      mine.find((t) => t.title.toLowerCase().includes(lower) && isOpen(t)) ??
+      mine.find((t) => t.title.toLowerCase().includes(lower))
+    );
+  }
+
+  /**
+   * The list a name refers to, made if it does not exist yet. Asking an agent
+   * to "put that on my Errands list" should not fail because there is no
+   * Errands list — that is what was being asked for.
+   */
+  private async resolveTaskList(name: string): Promise<string | undefined> {
+    const trimmed = name.trim();
+    if (!trimmed) return undefined;
+    if (/^(inbox|none)$/i.test(trimmed)) return undefined;
+    const existing = this.knowledge.findTaskList(trimmed);
+    if (existing) return existing.id;
+    const created = await this.knowledge.upsertTaskList({ name: trimmed });
+    return created.id;
+  }
+
   async runTool(name: string, input: Record<string, unknown>): Promise<string> {
     const s = (key: string): string => (typeof input[key] === 'string' ? (input[key] as string) : '');
     const n = (key: string, fallback = 0): number =>
@@ -1731,45 +1823,129 @@ export class PersonalAgent extends EventEmitter {
       }
 
       case 'list_tasks': {
-        const filter = s('status');
+        const view = s('view');
+        const status = s('status');
+        const lists = this.knowledge.taskLists;
         let tasks = this.knowledge.tasks.filter((t) => t.assignee === this.knowledge.address);
-        if (filter && filter !== 'open') tasks = tasks.filter((t) => t.status === filter);
-        else if (filter === 'open') tasks = tasks.filter((t) => t.status !== 'done' && t.status !== 'dropped');
+
+        if (view === 'today') tasks = tasks.filter((t) => isOpen(t) && isDueToday(t));
+        else if (view === 'overdue') tasks = tasks.filter((t) => isOverdue(t));
+        else if (view === 'inbox') tasks = tasks.filter((t) => isOpen(t) && !t.listId);
+        else if (view === 'upcoming')
+          tasks = tasks.filter((t) => isOpen(t) && t.dueDate !== undefined && !isDueToday(t));
+        else if (view === 'completed') tasks = tasks.filter((t) => !isOpen(t));
+        else if (view === 'all') tasks = tasks.filter(isOpen);
+
+        if (status && status !== 'open') tasks = tasks.filter((t) => t.status === status);
+        else if (status === 'open') tasks = tasks.filter(isOpen);
+        else if (!view) tasks = tasks.filter(isOpen);
+
+        if (s('list')) {
+          const wanted = this.knowledge.findTaskList(s('list'));
+          tasks = wanted ? tasks.filter((t) => t.listId === wanted.id) : [];
+        }
+        if (s('label')) tasks = tasks.filter((t) => t.labels.includes(s('label')));
+
         if (!tasks.length) return 'No tasks match.';
-        return tasks
-          .map(
-            (t) =>
-              `- [${t.status}] ${t.title}${t.dueDate ? ` (due ${formatTime(t.dueDate, this.knowledge.profile.timezone)})` : ''}` +
+        tasks = sortTasks(tasks, 'due');
+        const shown = tasks.slice(0, 60);
+        const more = tasks.length - shown.length;
+        return shown
+          .map((t) => {
+            const list = lists.find((l) => l.id === t.listId);
+            return (
+              `- [${t.status}] ${t.title}` +
+              `${t.dueDate ? ` (due ${this.dueText(t)}${isOverdue(t) ? ', overdue' : ''})` : ''}` +
+              `${t.priority !== 'normal' ? ` [${t.priority}]` : ''}` +
+              `${list ? ` #${list.name}` : ''}` +
+              `${t.labels.map((l) => ` @${l}`).join('')}` +
+              `${t.recurrence ? ` (${describeRecurrence(t.recurrence).toLowerCase()})` : ''}` +
               `${t.assignedBy !== this.knowledge.address ? ` — from ${t.assignedBy}` : ''}` +
-              `${t.negotiationNote ? `\n    ${t.negotiationNote}` : ''}`,
-          )
-          .join('\n');
+              `${t.negotiationNote ? `\n    ${t.negotiationNote}` : ''}`
+            );
+          })
+          .join('\n') + (more > 0 ? `\n(and ${more} more — narrow it with view, list or label)` : '');
       }
 
       case 'create_task': {
+        // The same parser the quick-add box uses, so asking your agent for
+        // "pay rent every month on the 1st" and typing it land in one place.
+        const spoken = parseQuickAdd(`${s('due')} ${s('repeat')}`.trim());
+        // Saying so is the point: a date silently dropped is a task that never
+        // shows up in Today and nobody knows why.
+        if (s('due') && spoken.dueDate === undefined) {
+          return `I could not read "${s('due')}" as a date, so I have not added it. Try "tomorrow", "friday 5pm" or "in 3 days".`;
+        }
+        if (s('repeat') && !spoken.recurrence) {
+          return `I could not read "${s('repeat')}" as a repeat. Try "every week", "every 3 days" or "every weekday".`;
+        }
         const days = n('due_in_days', 0);
+        const listId = s('list') ? await this.resolveTaskList(s('list')) : undefined;
+        const steps = Array.isArray(input.steps) ? (input.steps as unknown[]) : [];
+        const labels = Array.isArray(input.labels)
+          ? (input.labels as unknown[]).filter((l): l is string => typeof l === 'string')
+          : [];
+
         const task = await this.knowledge.upsertTask({
           title: s('title'),
           detail: s('detail'),
-          priority: (s('priority') as never) || 'normal',
-          dueDate: days > 0 ? Date.now() + days * DAY : undefined,
+          priority: (s('priority') as never) || spoken.priority || 'normal',
+          dueDate: spoken.dueDate ?? (days > 0 ? Date.now() + days * DAY : undefined),
+          dueHasTime: spoken.dueDate ? spoken.dueHasTime : undefined,
+          recurrence: spoken.recurrence,
+          listId,
+          labels,
+          subtasks: steps
+            .filter((step): step is string => typeof step === 'string' && step.trim().length > 0)
+            .map((step) => makeSubtask(step.trim())),
         });
-        return `Added task "${task.title}".`;
+        const when = task.dueDate ? `, due ${this.dueText(task)}` : '';
+        return `Added "${task.title}"${when}${task.recurrence ? `, ${describeRecurrence(task.recurrence).toLowerCase()}` : ''}.`;
       }
 
       case 'update_task': {
-        const needle = s('task').toLowerCase();
-        const task =
-          this.knowledge.tasks.find((t) => t.id === s('task')) ??
-          this.knowledge.tasks.find((t) => t.title.toLowerCase().includes(needle));
+        const task = this.findTask(s('task'));
         if (!task) return `No task matches "${s('task')}".`;
-        await this.knowledge.upsertTask({
+        const patch: Parameters<KnowledgeBase['upsertTask']>[0] = {
           id: task.id,
-          title: task.title,
-          status: (s('status') as never) || task.status,
-          detail: s('note') ? `${task.detail}\n\n${s('note')}`.trim() : task.detail,
-        });
-        return `"${task.title}" is now ${s('status')}.`;
+          title: s('title') || task.title,
+        };
+        if (s('status')) patch.status = s('status') as never;
+        if (s('priority')) patch.priority = s('priority') as never;
+        if (s('note')) patch.detail = `${task.detail}\n\n${s('note')}`.trim();
+        if (s('list')) patch.listId = await this.resolveTaskList(s('list'));
+        if (s('due')) {
+          if (/^(none|no|never|clear)$/i.test(s('due').trim())) {
+            patch.dueDate = undefined;
+            patch.dueHasTime = false;
+          } else {
+            const spoken = parseQuickAdd(s('due'));
+            if (spoken.dueDate === undefined) return `I could not read "${s('due')}" as a date.`;
+            patch.dueDate = spoken.dueDate;
+            patch.dueHasTime = spoken.dueHasTime;
+          }
+        }
+        const saved = await this.knowledge.upsertTask(patch);
+        return `Updated "${saved.title}".`;
+      }
+
+      case 'complete_task': {
+        const task = this.findTask(s('task'));
+        if (!task) return `No task matches "${s('task')}".`;
+        const done = input.done !== false;
+        const after = await this.knowledge.completeTask(task.id, done);
+        if (!done) return `Reopened "${task.title}".`;
+        if (after && after.status !== 'done' && after.dueDate) {
+          return `Ticked off "${task.title}" — it repeats, so it is back on ${this.dueText(after)}.`;
+        }
+        return `Ticked off "${task.title}".`;
+      }
+
+      case 'create_list': {
+        const existing = this.knowledge.findTaskList(s('name'));
+        if (existing) return `There is already a list called "${existing.name}".`;
+        const list = await this.knowledge.upsertTaskList({ name: s('name'), emoji: s('emoji') });
+        return `Made a list called "${list.name}".`;
       }
 
       case 'list_directory': {

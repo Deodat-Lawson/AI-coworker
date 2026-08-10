@@ -37,6 +37,9 @@ import type {
   Message,
   Presence,
   Profile,
+  Task,
+  TaskList,
+  TaskSection,
   UserStatus,
   VaultSearchHit,
   VaultSettings,
@@ -48,8 +51,10 @@ import type {
 import type { Appearance } from '@ai-coworker/shared';
 import {
   THEME_BACKGROUNDS,
+  dueLabel,
   emptyStatus,
   isDirect,
+  isOpen,
   normalizeAppearance,
   resolveTheme,
 } from '@ai-coworker/shared';
@@ -612,6 +617,8 @@ function buildState(): AppState {
       notes: [],
       artifacts: [],
       tasks: [],
+      taskLists: [],
+      taskSections: [],
       calendar: [],
       feedback: [],
       meetings: [],
@@ -663,6 +670,8 @@ function buildState(): AppState {
     notes: knowledge.notes,
     artifacts: knowledge.artifacts,
     tasks: knowledge.tasks,
+    taskLists: knowledge.taskLists,
+    taskSections: knowledge.taskSections,
     calendar: knowledge.calendar,
     feedback: knowledge.feedback,
     meetings: knowledge.meetings,
@@ -735,6 +744,118 @@ function notify(notification: AgentNotification): void {
   });
   toast.show();
   updateBadge();
+}
+
+// --- task reminders ----------------------------------------------------------
+
+/**
+ * A to-do list that only speaks when you open it is a list you forget. The
+ * sweep runs on a timer rather than one `setTimeout` per task: a person can
+ * have a thousand tasks, the app can be asleep when one comes due, and the
+ * clock can jump when a laptop wakes up — a poll survives all three.
+ */
+const REMINDER_INTERVAL = 30_000;
+
+/** How far back a missed reminder is still worth raising on launch. */
+const MISSED_REMINDER_WINDOW = 60 * 60_000;
+
+/** How many notifications one sweep may raise before it summarizes instead. */
+const REMINDER_BURST = 3;
+
+let reminderTimer: NodeJS.Timeout | null = null;
+let reminderNudge: NodeJS.Timeout | null = null;
+let firstReminderSweep = true;
+
+/** Keyed by the moment as well as the task, so a rescheduled task fires again. */
+function reminderKey(task: Task): string {
+  return `${task.id}:${reminderAt(task) ?? 0}`;
+}
+
+/** When a task should speak up: its reminder, or the time it is actually due. */
+function reminderAt(task: Task): number | null {
+  if (task.remindAt) return task.remindAt;
+  // An all-day task has no moment to fire at, so only timed ones announce
+  // themselves — otherwise every undated task would shout at midnight.
+  if (task.dueDate && task.dueHasTime) return task.dueDate;
+  return null;
+}
+
+function raiseTaskNotification(title: string, body: string, taskId?: string): void {
+  const toast = new Notification({ title, body });
+  toast.on('click', () => {
+    mainWindow?.show();
+    mainWindow?.focus();
+    if (taskId) mainWindow?.webContents.send('open-task', { taskId });
+  });
+  toast.show();
+}
+
+function sweepReminders(): void {
+  if (!knowledge || !Notification.isSupported()) return;
+  const now = Date.now();
+
+  const due: { task: Task; at: number }[] = [];
+  for (const task of knowledge.tasks) {
+    if (!isOpen(task)) continue;
+    const at = reminderAt(task);
+    if (at === null || at > now) continue;
+    if (knowledge.wasReminded(reminderKey(task))) continue;
+    due.push({ task, at });
+  }
+  if (!due.length) {
+    firstReminderSweep = false;
+    return;
+  }
+
+  // Mark every one of them before deciding what to show: a reminder that was
+  // deliberately swallowed must not come back on the next tick — and, because
+  // this is written to the knowledge base, must not come back on the next run
+  // of the app either.
+  void knowledge.markReminded(due.map(({ task }) => reminderKey(task)));
+
+  // On the first sweep after launch anything long past was missed while the app
+  // was closed. Saying so an hour later is a reminder; saying so a week later is
+  // noise, and the task is sitting in Today either way.
+  const worth = firstReminderSweep
+    ? due.filter((entry) => now - entry.at <= MISSED_REMINDER_WINDOW)
+    : due;
+  firstReminderSweep = false;
+
+  for (const { task } of worth.slice(0, REMINDER_BURST)) {
+    raiseTaskNotification(
+      task.title,
+      task.dueDate ? `Due ${dueLabel(task.dueDate, task.dueHasTime, now)}` : 'Reminder',
+      task.id,
+    );
+  }
+  const extra = worth.length - REMINDER_BURST;
+  if (extra > 0) {
+    raiseTaskNotification(
+      `${extra} more task${extra === 1 ? '' : 's'} due`,
+      'Open your to-do list to see them.',
+    );
+  }
+}
+
+function startReminders(): void {
+  stopReminders();
+  firstReminderSweep = true;
+  reminderTimer = setInterval(sweepReminders, REMINDER_INTERVAL);
+  // Do not make the first reminder of a session wait half a minute.
+  reminderNudge = setTimeout(sweepReminders, 2_000);
+}
+
+function stopReminders(): void {
+  if (reminderTimer) clearInterval(reminderTimer);
+  if (reminderNudge) clearTimeout(reminderNudge);
+  reminderTimer = null;
+  reminderNudge = null;
+}
+
+/** Setting a reminder for two minutes' time should not wait for the next tick. */
+function scheduleReminderSweep(): void {
+  if (reminderNudge) clearTimeout(reminderNudge);
+  reminderNudge = setTimeout(sweepReminders, 400);
 }
 
 /** The dock/taskbar badge counts mentions, the way every chat app does. */
@@ -811,6 +932,11 @@ async function startAgent(dir: string): Promise<void> {
     pushState();
     return;
   }
+
+  // Reminders belong to the knowledge base, not to the relay: your to-do list
+  // still nudges you with the network down.
+  startReminders();
+
   const { provider, reason } = createProvider({
     apiKey: config.geminiApiKey,
     model: config.geminiModel,
@@ -846,6 +972,7 @@ async function startAgent(dir: string): Promise<void> {
 }
 
 async function stopAgent(): Promise<void> {
+  stopReminders();
   if (agent) {
     await agent.shutdown();
     agent = null;
@@ -1147,11 +1274,54 @@ function registerIpc(): void {
     await requireKnowledge().deleteArtifact(id);
   });
 
-  handle<[Parameters<KnowledgeBase['upsertTask']>[0]], void>('task:save', async (input) => {
-    await requireKnowledge().upsertTask(input);
+  handle<[Parameters<KnowledgeBase['upsertTask']>[0]], Task>('task:save', async (input) => {
+    const task = await requireKnowledge().upsertTask(input);
+    // A task whose reminder was just set should not wait for the next sweep.
+    scheduleReminderSweep();
+    return task;
   });
   handle<[string], void>('task:delete', async (id) => {
     await requireKnowledge().deleteTask(id);
+  });
+
+  // --- the to-do list ---------------------------------------------------------
+
+  handle<[string, boolean], void>('task:complete', async (id, done) => {
+    await requireKnowledge().completeTask(id, done);
+  });
+  handle<[string[], Partial<Task>], void>('task:updateMany', async (ids, patch) => {
+    await requireKnowledge().updateTasks(ids, patch);
+    scheduleReminderSweep();
+  });
+  handle<[string[]], void>('task:deleteMany', async (ids) => {
+    await requireKnowledge().deleteTasks(ids);
+  });
+  handle<[Task[]], void>('task:restore', async (tasks) => {
+    await requireKnowledge().restoreTasks(tasks);
+    scheduleReminderSweep();
+  });
+  handle<[TaskList[]], void>('tasklist:restore', async (lists) => {
+    await requireKnowledge().restoreTaskLists(lists);
+  });
+  handle<[{ id: string; order: number }[]], void>('task:reorder', async (positions) => {
+    await requireKnowledge().reorderTasks(positions);
+  });
+
+  handle<[Parameters<KnowledgeBase['upsertTaskList']>[0]], TaskList>('tasklist:save', (input) =>
+    requireKnowledge().upsertTaskList(input),
+  );
+  handle<[string, boolean | undefined], void>('tasklist:delete', async (id, deleteTasks) => {
+    await requireKnowledge().deleteTaskList(id, { deleteTasks });
+  });
+  handle<[string[]], void>('tasklist:reorder', async (ids) => {
+    await requireKnowledge().reorderTaskLists(ids);
+  });
+  handle<[Parameters<KnowledgeBase['upsertTaskSection']>[0]], TaskSection>(
+    'tasksection:save',
+    (input) => requireKnowledge().upsertTaskSection(input),
+  );
+  handle<[string], void>('tasksection:delete', async (id) => {
+    await requireKnowledge().deleteTaskSection(id);
   });
 
   handle<[{ title: string; start: number; end: number; kind?: string }], void>(
