@@ -19,6 +19,7 @@ import {
   stringifyYaml,
 } from '@ai-coworker/shared';
 
+import { Icon } from '../components/icons.js';
 import CanvasView from './CanvasView.js';
 import GraphView, { type GraphRecords, type RecordKind } from './GraphView.js';
 import NoteView from './NoteView.js';
@@ -35,18 +36,6 @@ import {
 import SettingsModal, { formatHotkey } from './SettingsModal.js';
 import Suggester, { type SuggestItem } from './Suggester.js';
 import { eventToBinding, resolveBinding, type Command } from './commands.js';
-import {
-  CalendarIcon,
-  CommandIcon,
-  EyeIcon,
-  GraphIcon,
-  MoreIcon,
-  NewNoteIcon,
-  PencilIcon,
-  SearchIcon,
-  SettingsIcon,
-  SwitcherIcon,
-} from './icons.js';
 import { renderMarkdown } from './markdown.js';
 import { useUi } from './ui.js';
 import { useVault } from './useVault.js';
@@ -771,7 +760,7 @@ export default function ObsidianView({ extraViews = [], records }: Props) {
       {showRibbon ? (
         <div className="ob-ribbon">
           <RibbonButton label="New note" hint="A blank markdown file in your vault" hotkey="⌘N" onClick={() => void createNote()}>
-            <NewNoteIcon />
+            <Icon name="note-plus" />
           </RibbonButton>
           <RibbonButton
             label="Search"
@@ -780,10 +769,10 @@ export default function ObsidianView({ extraViews = [], records }: Props) {
             active={leftOpen && leftPane === 'search'}
             onClick={() => { setLeftOpen(true); setLeftPane('search'); }}
           >
-            <SearchIcon />
+            <Icon name="search" />
           </RibbonButton>
           <RibbonButton label="Go to note" hint="Jump to a note by name" hotkey="⌘O" onClick={() => setModal('switcher')}>
-            <SwitcherIcon />
+            <Icon name="switch" />
           </RibbonButton>
           <RibbonButton
             label="Graph"
@@ -792,13 +781,13 @@ export default function ObsidianView({ extraViews = [], records }: Props) {
             active={activeTab?.kind === 'graph'}
             onClick={() => openSpecial('graph')}
           >
-            <GraphIcon />
+            <Icon name="graph" />
           </RibbonButton>
           <RibbonButton label="Today's note" hint="One note per day, created on demand" hotkey="⌘⇧D" onClick={() => void vault.dailyNote().then((p) => openPath(p))}>
-            <CalendarIcon />
+            <Icon name="calendar" />
           </RibbonButton>
           <RibbonButton label="Command palette" hint="Everything this workspace can do" hotkey="⌘P" onClick={() => setModal('palette')}>
-            <CommandIcon />
+            <Icon name="command" />
           </RibbonButton>
 
           {extraViews.length ? <div className="ob-ribbon-rule" /> : null}
@@ -816,7 +805,7 @@ export default function ObsidianView({ extraViews = [], records }: Props) {
 
           <div className="ob-ribbon-spacer" />
           <RibbonButton label="Vault settings" hotkey="⌘," onClick={() => setModal('settings')}>
-            <SettingsIcon />
+            <Icon name="settings" />
           </RibbonButton>
         </div>
       ) : null}
@@ -977,9 +966,9 @@ export default function ObsidianView({ extraViews = [], records }: Props) {
                       type="button"
                     >
                       {leaf.tabs.find((t) => t.id === leaf.activeId)?.mode === 'reading' ? (
-                        <PencilIcon size={15} />
+                        <Icon name="edit" size={15} />
                       ) : (
-                        <EyeIcon size={15} />
+                        <Icon name="eye" size={15} />
                       )}
                     </button>
                     <button
@@ -1006,7 +995,7 @@ export default function ObsidianView({ extraViews = [], records }: Props) {
                         });
                       }}
                     >
-                      <MoreIcon size={15} />
+                      <Icon name="more" size={15} />
                     </button>
                   </>
                 ) : null}

@@ -1515,13 +1515,18 @@
         return false;
       };
 
-      const sections = ['Activity', 'Threads', 'Your agent', 'Agents', 'Knowledge', 'Settings'];
-      for (const name of sections) {
-        const item = qa('.side-row').find(
-          (row) => (q('.side-label', row) ?? row).textContent.trim() === name,
-        );
-        assert(item, `no way to reach ${name}`);
-        item.click();
+      // Taken from the sidebar rather than named here: the sections get renamed
+      // (the agent is called after whoever owns it now), and a test that lists
+      // them by label goes red for the rename instead of for the thing it is
+      // about. Reading them off the shell also means a section added later is
+      // checked without anybody remembering to add it.
+      const sections = [...qa('.side-group .side-row'), ...qa('.side-foot .side-row')]
+        .map((row) => ({ row, name: (q('.side-label', row) ?? row).textContent.trim() }))
+        .filter(({ name }) => name && name !== 'Search');
+      assert(sections.length >= 4, `only found ${sections.length} sections in the sidebar`);
+
+      for (const { row, name } of sections) {
+        row.click();
         await sleep(name === 'Knowledge' ? 1200 : 450);
         const buried = qa(clickable)
           .filter((el) => {

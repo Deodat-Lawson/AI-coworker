@@ -2,19 +2,9 @@ import { useMemo, useState } from 'react';
 
 import type { Artifact, Project, Task } from '@ai-coworker/shared';
 
+import { Icon } from '../components/icons.js';
 import { api, unwrap, type AppState } from '../lib/api.js';
 import { relative } from '../lib/format.js';
-import {
-  ArtifactsIcon,
-  CheckIcon,
-  ExternalIcon,
-  FolderOpenIcon,
-  PlusIcon,
-  ProjectsIcon,
-  SourcesIcon,
-  TasksIcon,
-  TrashIcon,
-} from '../vault/icons.js';
 import ObsidianView, { type ExtraView } from '../vault/ObsidianView.js';
 import { UiProvider } from '../vault/ui.js';
 import Sources from './Sources.js';
@@ -45,28 +35,28 @@ export default function Knowledge({ state }: Props) {
         id: 'projects',
         label: 'Projects',
         hint: 'The folders your notes and artifacts belong to',
-        icon: <ProjectsIcon />,
+        icon: <Icon name="folder" />,
         render: () => <ProjectsView state={state} />,
       },
       {
         id: 'artifacts',
         label: 'Artifacts',
         hint: 'Work your agent can show, not just describe',
-        icon: <ArtifactsIcon />,
+        icon: <Icon name="box" />,
         render: () => <ArtifactsView state={state} />,
       },
       {
         id: 'tasks',
         label: 'Tasks',
         hint: 'What you owe, including anything a meeting assigned you',
-        icon: <TasksIcon />,
+        icon: <Icon name="checklist" />,
         render: () => <TasksView state={state} />,
       },
       {
         id: 'sources',
         label: 'Sources',
         hint: 'Where knowledge comes in from, and who gets to hear it',
-        icon: <SourcesIcon />,
+        icon: <Icon name="plug" />,
         render: () => <Sources state={state} />,
       },
     ],
@@ -146,7 +136,7 @@ function RecordHeader({
         </div>
         {action ? (
           <button className="primary rec-head-action" onClick={action.onClick}>
-            <PlusIcon size={15} />
+            <Icon name="plus" size={15} />
             {action.label}
           </button>
         ) : null}
@@ -157,7 +147,7 @@ function RecordHeader({
         </span>
         {dir ? (
           <button className="rec-dir" onClick={() => void api.openKnowledgeDir()} title={dir}>
-            <FolderOpenIcon size={14} />
+            <Icon name="folder-open" size={14} />
             <span className="rec-dir-path">{shortenPath(dir)}</span>
           </button>
         ) : null}
@@ -261,7 +251,7 @@ function ProjectsView({ state }: { state: AppState }) {
   return (
     <div className="rec">
       <RecordHeader
-        icon={<ProjectsIcon size={20} />}
+        icon={<Icon name="folder" size={20} />}
         title="Projects"
         definition="A project is the home a note, an artifact or a task belongs to. Give a piece of work one, and your agent can answer questions about it as a whole instead of a file at a time."
         count={state.projects.length}
@@ -342,7 +332,7 @@ function ProjectsView({ state }: { state: AppState }) {
 
       {state.projects.length === 0 && !editing ? (
         <EmptyState
-          icon={<ProjectsIcon size={26} />}
+          icon={<Icon name="folder" size={26} />}
           title="No projects yet"
           body="Name the thing you are working on. Notes, artifacts and tasks can then point at it, and the graph starts to have a shape."
           action={{ label: 'New project', onClick: blank }}
@@ -368,7 +358,7 @@ function ProjectsView({ state }: { state: AppState }) {
                       title="Delete this project"
                       onClick={() => void run(unwrap(api.deleteProject(project.id)))}
                     >
-                      <TrashIcon size={14} />
+                      <Icon name="trash" size={14} />
                     </button>
                   </span>
                 </div>
@@ -404,7 +394,7 @@ function ArtifactsView({ state }: { state: AppState }) {
   return (
     <div className="rec">
       <RecordHeader
-        icon={<ArtifactsIcon size={20} />}
+        icon={<Icon name="box" size={20} />}
         title="Artifacts"
         definition="An artifact is a piece of work your agent can put in front of someone — a pull request, a demo, a document, a number. It is the difference between saying the migration is going well and showing the diff that says so."
         count={state.artifacts.length}
@@ -507,7 +497,7 @@ function ArtifactsView({ state }: { state: AppState }) {
 
       {state.artifacts.length === 0 && !editing ? (
         <EmptyState
-          icon={<ArtifactsIcon size={26} />}
+          icon={<Icon name="box" size={26} />}
           title="Nothing to show yet"
           body="Add a pull request, a demo or a metric. This is what your agent reaches for when another agent asks what actually shipped."
           action={{ label: 'New artifact', onClick: blank }}
@@ -536,7 +526,7 @@ function ArtifactsView({ state }: { state: AppState }) {
                       title="Delete this artifact"
                       onClick={() => void run(unwrap(api.deleteArtifact(artifact.id)))}
                     >
-                      <TrashIcon size={14} />
+                      <Icon name="trash" size={14} />
                     </button>
                   </span>
                 </div>
@@ -550,7 +540,7 @@ function ArtifactsView({ state }: { state: AppState }) {
                   ))}
                   {artifact.url ? (
                     <a className="rec-link" href={artifact.url} target="_blank" rel="noreferrer">
-                      <ExternalIcon size={13} />
+                      <Icon name="external" size={13} />
                       {hostOf(artifact.url)}
                     </a>
                   ) : null}
@@ -609,7 +599,7 @@ function TasksView({ state }: { state: AppState }) {
   return (
     <div className="rec">
       <RecordHeader
-        icon={<TasksIcon size={20} />}
+        icon={<Icon name="checklist" size={20} />}
         title="Tasks"
         definition="A task is work you owe somebody. Most of these you will not have typed: when your agent takes something on in a meeting, it lands here, so the commitment and the record of it are the same thing."
         count={state.tasks.filter((t) => t.status !== 'done').length}
@@ -635,7 +625,7 @@ function TasksView({ state }: { state: AppState }) {
 
       {state.tasks.length === 0 ? (
         <EmptyState
-          icon={<TasksIcon size={26} />}
+          icon={<Icon name="checklist" size={26} />}
           title="Nothing owed"
           body="Anything your agent agrees to on your behalf shows up here with the meeting it came from, so you can find out what you promised without reading a transcript."
         />
@@ -689,7 +679,7 @@ function TaskRow({
         title={done ? 'Mark as not done' : 'Mark as done'}
         aria-pressed={done}
       >
-        {done ? <CheckIcon size={13} /> : null}
+        {done ? <Icon name="check" size={13} /> : null}
       </button>
 
       <div className="task-main">
@@ -734,7 +724,7 @@ function TaskRow({
           ))}
         </select>
         <button className="ghost is-danger" onClick={onDelete} title="Delete this task">
-          <TrashIcon size={14} />
+          <Icon name="trash" size={14} />
         </button>
       </div>
     </article>

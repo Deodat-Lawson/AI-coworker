@@ -99,7 +99,14 @@ export type IconName =
   | 'palette'
   | 'layout'
   | 'image'
-  | 'globe';
+  | 'globe'
+  // the vault
+  | 'note-plus'
+  | 'switch'
+  | 'graph'
+  | 'command'
+  | 'box'
+  | 'checklist';
 
 /**
  * Path data only — no `<svg>` wrapper, no colour, no size. The wrapper below
@@ -463,6 +470,52 @@ const PATHS: Record<IconName, ReactNode> = {
       <circle cx="12" cy="12" r="8.5" />
       <path d="M3.5 12h17" />
       <path d="M12 3.5a13 13 0 0 1 0 17 13 13 0 0 1 0-17" />
+    </>
+  ),
+
+  // The vault's ribbon, and the three kinds of record kept beside the notes.
+  // `box` and `checklist` are what artifacts and tasks are drawn as, chosen to
+  // be unmistakable from `folder` — projects — at 18px, since the three of them
+  // sit in a column together and are the words most in need of explaining.
+  'note-plus': (
+    <>
+      <path d="M14 3.2V7a1.5 1.5 0 0 0 1.5 1.5h3.8" />
+      <path d="M19.3 10.4V19a2 2 0 0 1-2 2H6.7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7.6z" />
+      <path d="M12 12.4v5M9.5 14.9h5" />
+    </>
+  ),
+  switch: (
+    <>
+      <path d="M8 3.5 4 7.5l4 4" />
+      <path d="M4 7.5h15" />
+      <path d="M16 20.5l4-4-4-4" />
+      <path d="M20 16.5H5" />
+    </>
+  ),
+  graph: (
+    <>
+      <circle cx="6" cy="6.5" r="2.5" />
+      <circle cx="18" cy="9" r="2.5" />
+      <circle cx="11.5" cy="18" r="2.5" />
+      <path d="M8.4 7.1 15.6 8.5" />
+      <path d="M7.1 8.8l3.3 6.9" />
+      <path d="M16.7 11.1 13 15.9" />
+    </>
+  ),
+  command: (
+    <path d="M18 3a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3H6a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3V6a3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3h12a3 3 0 0 0 3-3 3 3 0 0 0-3-3z" />
+  ),
+  box: (
+    <>
+      <path d="M12 3.3 20 7.5v9L12 20.7 4 16.5v-9z" />
+      <path d="M4 7.5 12 11.7l8-4.2" />
+      <path d="M12 11.7v9" />
+    </>
+  ),
+  checklist: (
+    <>
+      <path d="M4 6.8h9.5M4 12h9.5M4 17.2h5.5" />
+      <path d="M15.4 16.4 17.6 18.6 21 14.8" />
     </>
   ),
 };
