@@ -33,6 +33,8 @@ import type {
   VaultSettings,
   VaultSnapshot,
   Workspace,
+  WorkspaceAgent,
+  WorkspaceAgentPatch,
   WorkspaceMember,
   WorkspacePermissions,
   WorkspacePrefs,
@@ -129,6 +131,11 @@ export interface WorkspaceView {
   joinRequests: JoinRequest[];
   audit: AuditEntry[];
   prefs: WorkspacePrefs;
+  /**
+   * The one agent that represents you here, and what it is allowed to reach on
+   * this machine. Local to your install — the relay never sees it.
+   */
+  agent: WorkspaceAgent;
 }
 
 /** A mention or reaction worth showing in the Activity view. */
@@ -150,6 +157,33 @@ export interface ThreadView {
   channelId: string;
   root: Message;
   replies: Message[];
+}
+
+/** One workspace's agent, reduced to what the isolation screen draws. */
+export interface AgentIsolationRow {
+  workspaceId: string;
+  workspaceName: string;
+  agentName: string;
+  emoji: string;
+  accent: string;
+  autonomy: string;
+  /** Human sentence: what this one reaches. */
+  reach: string;
+  sourceCount: number | 'all';
+  folders: string[];
+  ceiling: string;
+  tools: string[];
+}
+
+export interface AgentIsolationView {
+  rows: AgentIsolationRow[];
+  /**
+   * Grants that appear in more than one workspace. Not an error — you may
+   * genuinely want two agents reading the same folder — but it is the only
+   * thing on the screen worth pointing at, so it is computed rather than left
+   * for a person to spot by comparing two lists.
+   */
+  shared: { a: string; b: string; overlap: string[] }[];
 }
 
 export interface DiscoverableWorkspaceView {
@@ -382,6 +416,7 @@ export interface DesktopApi {
     name: string;
     description?: string;
     icon?: string;
+    iconImage?: string;
     color?: string;
     discoverable?: boolean;
     channels?: string[];
@@ -404,7 +439,7 @@ export interface DesktopApi {
   transferOwnership(workspaceId: string, address: string): Promise<IpcResult>;
   setWorkspaceProfile(
     workspaceId: string,
-    patch: { address?: string; displayName?: string; title?: string },
+    patch: { address?: string; displayName?: string; title?: string; avatar?: string },
   ): Promise<IpcResult>;
   requestToJoin(slug: string, message?: string, relayUrl?: string): Promise<IpcResult>;
   reviewJoinRequest(
@@ -442,6 +477,22 @@ export interface DesktopApi {
   addToChannel(workspaceId: string, channelId: string, addresses: string[]): Promise<IpcResult>;
   removeFromChannel(workspaceId: string, channelId: string, address: string): Promise<IpcResult>;
   openDirectMessage(workspaceId: string, addresses: string[]): Promise<IpcResult>;
+
+  // --- the agent in one workspace ---
+  /**
+   * Change this workspace's agent: what it is called, how much rope it has,
+   * and what it may reach. Every field is local; nothing here is sent to a
+   * relay, and a grant made here applies to this workspace and no other.
+   */
+  saveWorkspaceAgent(workspaceId: string, patch: WorkspaceAgentPatch): Promise<IpcResult<WorkspaceAgent>>;
+  /** Pick a folder to grant this workspace's agent. Returns the path, or null. */
+  grantAgentFolder(workspaceId: string): Promise<IpcResult<string | null>>;
+  revokeAgentFolder(workspaceId: string, folder: string): Promise<IpcResult<WorkspaceAgent>>;
+  /**
+   * What every workspace agent on this machine can reach, side by side — the
+   * screen that answers "are these actually separate?" with evidence.
+   */
+  agentIsolation(): Promise<IpcResult<AgentIsolationView>>;
 
   setChannelPrefs(workspaceId: string, channelId: string, patch: Partial<ChannelPrefs>): Promise<IpcResult>;
   setWorkspacePrefs(workspaceId: string, patch: Partial<WorkspacePrefs>): Promise<IpcResult>;

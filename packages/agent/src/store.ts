@@ -36,9 +36,13 @@ import {
   type TranscriptEntry,
   type UserStatus,
   type Visibility,
+  type WorkspaceAgent,
+  type WorkspaceAgentPatch,
   type WorkspacePrefs,
   type FrontmatterValue,
+  applyAgentPatch,
   defaultChannelPrefs,
+  normalizeWorkspaceAgent,
   defaultWorkspacePrefs,
   emptyStatus,
   hashUnit,
@@ -90,6 +94,16 @@ export interface ClientState {
   relays: string[];
   /** Per-workspace notification and sidebar choices. */
   prefs: Record<string, WorkspacePrefs>;
+  /**
+   * The agent that represents this person in each workspace, keyed by
+   * workspace id — including what it is allowed to reach on this machine.
+   *
+   * It lives here, beside the drafts and the muted channels, because it is the
+   * same kind of thing: yours, local, and none of the relay's business. A
+   * workspace never learns what its agent was granted; it only ever sees what
+   * the agent chose to say.
+   */
+  agents: Record<string, WorkspaceAgent>;
   /** Unsent text, keyed `workspaceId:channelId` (or `:threadRootId`). */
   drafts: Record<string, string>;
   /** Where to reopen: the last workspace, and the last channel inside each. */
@@ -120,6 +134,7 @@ function emptyClientState(): ClientState {
     version: 1,
     relays: [],
     prefs: {},
+    agents: {},
     drafts: {},
     lastWorkspace: '',
     lastChannel: {},
@@ -676,6 +691,50 @@ export class KnowledgeBase extends EventEmitter {
     const fresh = defaultWorkspacePrefs(workspaceId);
     this.clientState.prefs[workspaceId] = fresh;
     return fresh;
+  }
+
+  /**
+   * The agent that represents this person in one workspace.
+   *
+   * Created on first read, which is deliberate: the moment you are in a
+   * workspace you have an agent there, and it starts gated shut rather than
+   * inheriting whatever the agent next door was trusted with.
+   */
+  workspaceAgent(workspaceId: string, seed?: { name?: string; emoji?: string; accent?: string }): WorkspaceAgent {
+    this.clientState.agents ??= {};
+    const stored = this.clientState.agents[workspaceId];
+    // The seed only ever names a *new* agent: once one exists, what it is
+    // called is the person's answer, not the workspace's.
+    const agent = normalizeWorkspaceAgent(workspaceId, stored ?? seed);
+    this.clientState.agents[workspaceId] = agent;
+    // A newly created agent is written straight away rather than waiting for
+    // somebody to change something. Otherwise it exists only in memory, and a
+    // restart would introduce "your new agent" all over again — and, worse,
+    // would forget that its grants were deliberately empty rather than unset.
+    if (!stored) void this.saveClient();
+    return agent;
+  }
+
+  /** Every workspace agent this person has, for the isolation overview. */
+  get workspaceAgents(): WorkspaceAgent[] {
+    this.clientState.agents ??= {};
+    return Object.values(this.clientState.agents);
+  }
+
+  async saveWorkspaceAgent(workspaceId: string, patch: WorkspaceAgentPatch): Promise<WorkspaceAgent> {
+    const next = applyAgentPatch(this.workspaceAgent(workspaceId), patch);
+    this.clientState.agents[workspaceId] = next;
+    await this.saveClient();
+    this.emit('change', 'agents');
+    return next;
+  }
+
+  /** Leaving a workspace takes its agent — and its grants — with it. */
+  async forgetWorkspaceAgent(workspaceId: string): Promise<void> {
+    if (!this.clientState.agents?.[workspaceId]) return;
+    delete this.clientState.agents[workspaceId];
+    await this.saveClient();
+    this.emit('change', 'agents');
   }
 
   channelPrefs(workspaceId: string, channelId: string) {

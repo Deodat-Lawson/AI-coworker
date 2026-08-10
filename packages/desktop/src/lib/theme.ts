@@ -16,6 +16,8 @@
 import {
   type Appearance,
   type ResolvedTheme,
+  ACCENT_TOKEN_NAMES,
+  accentTokens,
   normalizeAppearance,
   resolveTheme,
 } from '@ai-coworker/shared';
@@ -57,6 +59,34 @@ export function applyMirroredTheme(): void {
 
 export function currentTheme(appearance: Appearance): ResolvedTheme {
   return resolveTheme(normalizeAppearance(appearance), systemPrefersDark());
+}
+
+// ---------------------------------------------------------------------------
+// The workspace's own colour
+// ---------------------------------------------------------------------------
+
+/**
+ * Tint the app with one workspace's colour.
+ *
+ * This is the customization people notice first — switching workspaces should
+ * *look* like moving somewhere else, the way it does in Discord. The derivation
+ * lives in shared (`accentTokens`) so both grounds can be checked for contrast
+ * in a test; this is only the part that touches the DOM. Setting the tokens on
+ * `<html>` wins over the `:root` block without editing a line of CSS.
+ *
+ * Pass `null` to hand the app back to the stylesheet's own accent.
+ */
+export function applyAccent(color: string | null): void {
+  if (typeof document === 'undefined') return;
+  const root = document.documentElement;
+  const tokens = color
+    ? accentTokens(color, root.dataset.theme === 'light' ? 'light' : 'dark')
+    : null;
+  if (!tokens) {
+    for (const token of ACCENT_TOKEN_NAMES) root.style.removeProperty(token);
+    return;
+  }
+  for (const [token, value] of Object.entries(tokens)) root.style.setProperty(token, value);
 }
 
 /**

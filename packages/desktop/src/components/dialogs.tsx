@@ -11,6 +11,8 @@ import {
 
 import { api, unwrap, type AppState, type WorkspaceView } from '../lib/api.js';
 import { plural, relative } from '../lib/format.js';
+import { Icon, channelIcon } from './icons.js';
+import { IconUploader } from './IconUploader.js';
 import { Avatar, ConfirmButton, Field, Modal } from './ui.js';
 
 /** Every dialog reports failures the same way, in place, never as a native alert. */
@@ -42,6 +44,7 @@ export function AddWorkspaceDialog({ state, onClose }: { state: AppState; onClos
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [icon, setIcon] = useState<string>(WORKSPACE_ICONS[0]!);
+  const [iconImage, setIconImage] = useState('');
   const [color, setColor] = useState<string>(WORKSPACE_COLORS[0]!);
   const [channels, setChannels] = useState('random');
   const [code, setCode] = useState('');
@@ -81,13 +84,23 @@ export function AddWorkspaceDialog({ state, onClose }: { state: AppState; onClos
               placeholder="The platform team's day-to-day"
             />
           </Field>
-          <Field label="Icon and colour">
+          <Field label="Icon and colour" hint="Upload a square image, or pick an emoji. You can change both later.">
+            <IconUploader
+              image={iconImage}
+              emoji={icon}
+              name={name}
+              color={color}
+              onImage={setIconImage}
+            />
             <div className="picker-row">
               {WORKSPACE_ICONS.map((option) => (
                 <button
                   key={option}
-                  className={`icon-choice ${icon === option ? 'on' : ''}`}
-                  onClick={() => setIcon(option)}
+                  className={`icon-choice ${icon === option && !iconImage ? 'on' : ''}`}
+                  onClick={() => {
+                    setIcon(option);
+                    setIconImage('');
+                  }}
                 >
                   {option}
                 </button>
@@ -118,6 +131,7 @@ export function AddWorkspaceDialog({ state, onClose }: { state: AppState; onClos
                     name: name.trim(),
                     description: description.trim(),
                     icon,
+                    iconImage,
                     color,
                     channels: channels
                       .split(',')
@@ -290,7 +304,7 @@ export function ChannelBrowser({
           <div className="browse-row" key={view.channel.id}>
             <div className="browse-text">
               <div className="browse-name">
-                {view.channel.kind === 'private' ? '🔒' : '#'}
+                <Icon name={channelIcon(view.channel.kind)} size={15} />
                 {view.channel.name}
                 {view.channel.archived ? <span className="tag small">archived</span> : null}
               </div>
@@ -552,7 +566,12 @@ export function NewDirectMessageDialog({
           return (
             <span className="token" key={address}>
               {member?.displayName ?? address}
-              <button onClick={() => setPicked((p) => p.filter((a) => a !== address))}>✕</button>
+              <button
+                aria-label="Remove"
+                onClick={() => setPicked((p) => p.filter((a) => a !== address))}
+              >
+                <Icon name="close" size={13} />
+              </button>
             </span>
           );
         })}

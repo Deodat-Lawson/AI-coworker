@@ -158,12 +158,68 @@ owns it; everybody after that joins as a member. From there:
 | **Audit log** | Every administrative act — role changes, deactivations, permission edits, invitations — kept on the relay and readable by admins. |
 | **Presence and status** | Active / away / do-not-disturb, plus a custom emoji and message with an optional expiry. |
 | **Notifications** | Per channel and per workspace, with mute, DND, and a dock badge for mentions. What you silence is stored locally; the relay is never told. |
-| **Settings** | One screen for the whole app: you and your agent, availability, the knowledge base, sources, notifications, the workspace, its members and channels, and the network. There is no second place to look. |
+| **Settings** | One screen for the whole app, in three scopes: everywhere (brain, network, appearance, shortcuts), you (profile, availability, knowledge base, imported memory), and this workspace (its agent and access, notifications, sidebar, the workspace itself, members, channels). There is no second place to look. |
 | **Getting around** | `⌘K` quick switcher, `⌘F` search, `⌥⇧↑`/`⌥⇧↓` through unreads, `⌘⇧D` your agent, `⌘,` settings, `⌘/` for the rest. |
 
 Your agent can work the same surface on your behalf — ask it to
 `catch me up`, `read #auth-migration`, `post to #billing`, or
 `invite sarah to the workspace`, and it uses the same protocol the UI does.
+
+### Making it yours
+
+The sidebar is arranged by the person, not the app. Sections you name, channels
+you drag between them, an order you chose, a density, and "show only unread" —
+all stored **as a diff from the default layout**, so a channel created tomorrow
+still lands somewhere sensible instead of vanishing because it was not in a list
+written last week. Right-click anything: a channel to star, mute, file or leave
+it; a section to rename, collapse, reorder or delete it.
+
+A workspace can carry an uploaded icon as well as an emoji, and you can carry a
+picture of your own — both squared off, resized to 128px and re-encoded in the
+app, then checked again on the relay, because those records are replicated to
+every member. Your picture is per workspace, like your display name: a
+photograph at work and a cartoon in a side project is a reasonable thing to
+want. Its colour is not decoration
+either: the whole accent family is derived from it, so switching workspaces
+looks like moving somewhere else, and the text riding on a filled button is
+picked by contrast rather than assumed (a test checks every offered colour
+clears 4.5:1 in both themes).
+
+## One agent per workspace
+
+You have one knowledge base and one machine. You do **not** have one agent.
+
+The agent in a client's workspace and the one in your employer's are different
+agents: different names, different standing orders, and — the part that matters
+— different reach into the machine they both run on. A workspace agent is
+created the moment you join, stored on your own machine, and starts with
+**nothing**: no imported memory, no folders, no coding tool. Everything it can
+reach, you granted it deliberately, for that workspace alone.
+
+```
+Acme ─ "Ada"      watching only   · Claude Code memory · /work/acme     · internal
+Home ─ "your agent" acts for you  · nothing imported   · no folders     · confidential
+```
+
+| | |
+|---|---|
+| **Identity** | Name, glyph and colour per workspace, drawn on the workspace tile — so two agents are visibly not the same actor. |
+| **Autonomy** | Watch only, ask first, or act for you. Watching only holds off everything that puts something into the world, however the individual switches are set. |
+| **Instructions** | Standing orders for this workspace, on top of your machine-wide ones — or instead of them, if you switch inheritance off. |
+| **Capabilities** | Named switches for reading the workspace, meeting, holding calendar time, accepting work, reading and writing your knowledge base, recalling imported memory, and reaching Claude Code, Codex or granted folders. Only switches the runtime actually honours are shown, and a test enforces that. |
+| **Sources** | Nothing, chosen sources, or everything imported. A source granted here is not granted next door, and switching a tool off covers every source of that kind whether or not it was granted. |
+| **Ceiling** | Nothing above a chosen sensitivity is *loaded* in this workspace — not withheld politely, not in the room. `secret` never leaves the machine in any workspace. |
+| **Folders** | Absolute paths, matched with a separator guard, so a grant for `/work/acme` never reaches `/work/acme-secrets`. |
+| **Isolation** | A panel listing your other agents and what each reaches, and calling out any overlap — because "are these actually separate?" deserves evidence, not a promise. |
+
+Leaving a workspace takes its agent and its grants with it: rejoining later
+starts closed again rather than quietly restoring reach nobody re-approved.
+
+The gates are in the runtime, not the screen. Recall is filtered inside the
+memory index before the audience decision runs; the knowledge digest is empty
+for an agent that was not granted it; the `recall_memory` tool refuses up front
+and says which setting would change that. `tests/agent-isolation.test.mjs` drives
+all of it end to end.
 
 ## A meeting room is a channel
 
@@ -235,9 +291,10 @@ packages/
              holds the markdown engine, the editor, the graph and the canvas
 docs/        how sources and sharing work
 tests/       protocol, moderator, knowledge base, workspaces, member and
-             permission management, accounts and registration, themes and
-             contrast, markup, memory, recall, access, vault, markdown, and a
-             full 3-agent meeting
+             permission management, per-workspace agents and their isolation,
+             sidebar layout, workspace icons, accounts and registration, themes,
+             accent contrast, markup, memory, recall, access, vault, markdown,
+             and a full 3-agent meeting
 scripts/     the five-person demo, and the icon generator
 brand/       the mark, as vector — regenerate, don't hand-edit
 ```
@@ -252,7 +309,9 @@ db.json          projects, artifacts, tasks, calendar, feedback
 notes/           your vault — markdown, folders, attachments, .obsidian/ config
 meetings/*.json  transcripts and your own briefings
 memory/          what your other agents already knew, imported and classified
-client.json      which relays to dial, drafts, per-channel notification choices
+client.json      which relays to dial, drafts, per-channel notification choices,
+                 your sidebar layout, and one agent per workspace with what it
+                 was granted — none of which the relay ever sees
 ```
 
 `notes/` is a real Obsidian vault. Point Obsidian at it and everything is where
@@ -387,19 +446,19 @@ reinstall undoes it and the next launch redoes it; nothing shipped depends on it
 ## Status
 
 Working end to end: multi-workspace messaging with channels, DMs, threads,
-reactions, unreads, search and invitations; scheduling negotiation; the full
-meeting state machine; grounded artifact sharing; assignment and pushback;
-per-person briefings; the vault and its editor; the desktop app; and packaging
-config for all three
-platforms.
+reactions, unreads, search and invitations; one gated agent per workspace, with
+its grants enforced in the runtime rather than the screen; a sidebar the person
+arranges; scheduling negotiation; the full meeting state machine; grounded
+artifact sharing; assignment and pushback; per-person briefings; the vault and
+its editor; the desktop app; and packaging config for all three platforms.
 
 Known limits: everybody has to be online for their agents to negotiate a time.
 The relay persists workspaces, channels and message history
 (`.relay-workspaces.json`), accounts and sessions (`.relay-accounts.json`, mode
 `0600`), plus the meeting schedule (`.relay-state.json`); meeting transcripts and
 briefings live only on the participants' machines, which is the intent. Message
-history is capped per channel rather than archived, and there are no file
-uploads. Confirmation codes are printed to the relay's log rather than emailed
+history is capped per channel rather than archived, and the only thing you can
+upload is a workspace icon — messages carry no attachments yet. Confirmation codes are printed to the relay's log rather than emailed
 until you give it a mail transport — deliberate, so a relay you start for your
 own team works immediately, but it does mean anybody who can read that log can
 sign in as anybody.

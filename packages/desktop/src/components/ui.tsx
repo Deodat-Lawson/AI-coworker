@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { EMOJI_PICKER_ROWS, emojiFor, searchEmoji } from '@ai-coworker/shared';
 
 import { avatarColor, initials } from '../lib/format.js';
+import { Icon, type IconName } from './icons.js';
 
 /** A centred dialog. Escape closes it, and clicking the backdrop does too. */
 export function Modal({
@@ -40,7 +41,7 @@ export function Modal({
             {subtitle ? <div className="modal-sub">{subtitle}</div> : null}
           </div>
           <button className="ghost" onClick={onClose} aria-label="Close">
-            ✕
+            <Icon name="close" size={15} />
           </button>
         </div>
         <div className="modal-body">{children}</div>
@@ -74,33 +75,147 @@ export function Popover({ onClose, children, align = 'left' }: { onClose: () => 
   );
 }
 
+/**
+ * A menu that opens where the pointer is, the way right-clicking a channel
+ * works in Slack and Discord.
+ *
+ * It positions itself after mounting rather than at the click, because the only
+ * way to know whether a menu fits below the cursor is to measure the menu — and
+ * a menu that opens half off the bottom of the window is worse than no menu.
+ */
+export function ContextMenu({
+  x,
+  y,
+  onClose,
+  children,
+}: {
+  x: number;
+  y: number;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number }>({ left: x, top: y });
+
+  useEffect(() => {
+    const box = ref.current?.getBoundingClientRect();
+    if (!box) return;
+    const margin = 8;
+    const left = Math.max(margin, Math.min(x, window.innerWidth - box.width - margin));
+    const top =
+      y + box.height + margin > window.innerHeight
+        ? Math.max(margin, y - box.height)
+        : y;
+    setPos({ left, top });
+  }, [x, y]);
+
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    const id = setTimeout(() => {
+      document.addEventListener('mousedown', onDown);
+      window.addEventListener('contextmenu', onDown);
+    }, 0);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('resize', onClose);
+    return () => {
+      clearTimeout(id);
+      document.removeEventListener('mousedown', onDown);
+      window.removeEventListener('contextmenu', onDown);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', onClose);
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      className="context-menu"
+      ref={ref}
+      role="menu"
+      style={{ left: pos.left, top: pos.top }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** One row in a context menu: an icon, a label, and an optional shortcut. */
+export function MenuRow({
+  icon,
+  label,
+  hint,
+  danger,
+  checked,
+  onClick,
+}: {
+  icon?: IconName;
+  label: string;
+  hint?: string;
+  danger?: boolean;
+  checked?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button className={`menu-item ${danger ? 'danger' : ''}`} role="menuitem" onClick={onClick}>
+      {icon ? <Icon name={icon} size={15} className="menu-icon" /> : <span className="menu-icon" />}
+      <span className="menu-text">{label}</span>
+      {checked ? <Icon name="check" size={14} className="menu-check" /> : null}
+      {hint ? <span className="menu-hint">{hint}</span> : null}
+    </button>
+  );
+}
+
+export function MenuSeparator() {
+  return <div className="menu-sep" />;
+}
+
+export function MenuLabel({ children }: { children: ReactNode }) {
+  return <div className="menu-label">{children}</div>;
+}
+
 export function Avatar({
   name,
   address,
   size = 36,
   presence,
   square,
+  image,
 }: {
   name: string;
   address: string;
   size?: number;
   presence?: 'active' | 'away' | 'dnd' | 'offline';
   square?: boolean;
+  /** An uploaded picture. Initials are the fallback, not the placeholder. */
+  image?: string;
 }) {
+  const radius = square ? Math.round(size / 4) : '50%';
   return (
     <span className="avatar-wrap" style={{ width: size, height: size }}>
-      <span
-        className="avatar"
-        style={{
-          width: size,
-          height: size,
-          background: avatarColor(address || name),
-          borderRadius: square ? Math.round(size / 4) : '50%',
-          fontSize: Math.max(10, Math.round(size / 2.6)),
-        }}
-      >
-        {initials(name)}
-      </span>
+      {image ? (
+        <img
+          className="avatar"
+          src={image}
+          alt=""
+          style={{ width: size, height: size, borderRadius: radius, objectFit: 'cover' }}
+        />
+      ) : (
+        <span
+          className="avatar"
+          style={{
+            width: size,
+            height: size,
+            background: avatarColor(address || name),
+            borderRadius: radius,
+            fontSize: Math.max(10, Math.round(size / 2.6)),
+          }}
+        >
+          {initials(name)}
+        </span>
+      )}
       {presence ? <span className={`presence ${presence}`} title={presence} /> : null}
     </span>
   );
