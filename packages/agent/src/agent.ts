@@ -15,6 +15,7 @@ import {
   type MessageId,
   type Note,
   type Presence,
+  type Profile,
   type ProposedTask,
   type PublicProfile,
   type RequesterContext,
@@ -25,12 +26,14 @@ import {
   type TranscriptEntry,
   type UserStatus,
   type Workspace,
+  type WorkspaceAgent,
   type WorkspaceId,
   type WorkspacePermissions,
   type WorkspaceRole,
   DAY,
   HOUR,
   MINUTE,
+  agentMay,
   formatTime,
   freeSlots,
   handleFor,
@@ -179,8 +182,12 @@ export class PersonalAgent extends EventEmitter {
     this.workspaces.on('message', (message: Message, state: WorkspaceState) =>
       this.onIncomingMessage(message, state),
     );
-    this.workspaces.on('workspace.removed', (workspace: { name: string }, reason: string) => {
+    this.workspaces.on('workspace.removed', (workspace: { id: string; name: string }, reason: string) => {
       this.activity('info', `${workspace.name}: ${reason}`);
+      // The workspace is gone, so its agent goes with it — along with every
+      // grant it held. Leaving a workspace and rejoining it later must not
+      // quietly restore reach into this machine that nobody re-approved.
+      void this.knowledge.forgetWorkspaceAgent(workspace.id);
     });
 
     this.knowledge.on('change', (section: string) => this.emit('knowledge', section));
@@ -240,10 +247,20 @@ export class PersonalAgent extends EventEmitter {
   digest(
     audience: 'self' | 'meeting' = 'self',
     limits = { notes: 12, artifacts: 12, tasks: 15, memories: 8 },
-    context: { room?: RequesterContext[]; query?: string } = {},
+    context: { room?: RequesterContext[]; query?: string; workspaceId?: WorkspaceId } = {},
   ): KnowledgeDigest {
-    const visible = <T extends { visibility: string }>(items: T[]) =>
-      audience === 'self' ? items : items.filter((i) => i.visibility !== 'private');
+    // Acting *inside a workspace* means acting as that workspace's agent, and
+    // that agent's grants decide what is even loaded. Omitting the workspace is
+    // the agent working for its own human, on their own machine.
+    const workspaceAgent = context.workspaceId
+      ? this.knowledge.workspaceAgent(context.workspaceId)
+      : undefined;
+    const mayReadKnowledge = workspaceAgent ? agentMay(workspaceAgent, 'knowledge_read') : true;
+
+    const visible = <T extends { visibility: string }>(items: T[]) => {
+      if (!mayReadKnowledge) return [] as T[];
+      return audience === 'self' ? items : items.filter((i) => i.visibility !== 'private');
+    };
 
     return {
       projects: visible(this.knowledge.projects).filter((p) => p.status !== 'shipped' || audience === 'self'),
@@ -262,6 +279,7 @@ export class PersonalAgent extends EventEmitter {
         // forgot, not an empty room, so it is judged against a stranger.
         room: audience === 'meeting' ? (context.room ?? [UNKNOWN_LISTENER]) : undefined,
         limit: limits.memories ?? 8,
+        agent: workspaceAgent,
       }),
     };
   }
@@ -274,13 +292,22 @@ export class PersonalAgent extends EventEmitter {
    * room this is the owner's own view, which is the only time everything is
    * readable.
    */
-  recall(options: { text?: string; room?: RequesterContext[]; limit?: number } = {}): RecalledMemory[] {
+  recall(
+    options: {
+      text?: string;
+      room?: RequesterContext[];
+      limit?: number;
+      /** The workspace agent asking. Its grants are applied before anything else. */
+      agent?: WorkspaceAgent;
+    } = {},
+  ): RecalledMemory[] {
     if (!this.memory) return [];
     const hits = this.memory.query({
       owner: this.knowledge.profile,
       room: options.room,
       text: options.text,
       limit: options.limit ?? 8,
+      agent: options.agent,
     });
     return hits.map((hit) => ({
       title: hit.shared.title,
@@ -290,6 +317,26 @@ export class PersonalAgent extends EventEmitter {
       source: hit.record.sourceLabel,
       reason: hit.decision.reason,
     }));
+  }
+
+  /**
+   * The profile to reason with inside one workspace.
+   *
+   * Same human, same address — a workspace agent is not a disguise — but the
+   * standing instructions are that workspace's. An agent told "never discuss
+   * headcount" in a client workspace must not be handed the version of those
+   * orders that applies at home, and an agent whose human switched inheritance
+   * off must not see the machine-wide ones at all.
+   */
+  selfIn(workspaceId: WorkspaceId | undefined): Profile {
+    const profile = this.knowledge.profile;
+    if (!workspaceId) return profile;
+    const agent = this.knowledge.workspaceAgent(workspaceId);
+    const base = agent.inheritInstructions ? profile.agentInstructions.trim() : '';
+    const here = agent.instructions.trim();
+    const instructions = [base, here].filter(Boolean).join('\n\n');
+    if (instructions === profile.agentInstructions) return profile;
+    return { ...profile, agentInstructions: instructions };
   }
 
   /** Turn the meeting's participants into the audience the policy is judged against. */
@@ -616,7 +663,10 @@ export class PersonalAgent extends EventEmitter {
 
     try {
       const output = await this.provider.meetingTurn({
-        self: this.knowledge.profile,
+        // Not `this.knowledge.profile`: a meeting happens *in a workspace*, and
+        // the agent speaking is that workspace's agent, following that
+        // workspace's standing orders.
+        self: this.selfIn(state.meeting.workspaceId),
         meeting: state.meeting,
         phase: turn.phase,
         turnKind: turn.turnKind,
@@ -628,6 +678,7 @@ export class PersonalAgent extends EventEmitter {
           'meeting',
           { notes: 12, artifacts: 12, tasks: 15, memories: 8 },
           {
+            workspaceId: state.meeting.workspaceId,
             room: this.roomContext(participants),
             query: [
               state.meeting.title,
@@ -927,6 +978,7 @@ export class PersonalAgent extends EventEmitter {
     name: string;
     description?: string;
     icon?: string;
+    iconImage?: string;
     color?: string;
     discoverable?: boolean;
     channels?: string[];
@@ -1040,7 +1092,7 @@ export class PersonalAgent extends EventEmitter {
 
   setWorkspaceProfile(
     workspaceId: WorkspaceId,
-    patch: { address?: AgentAddress; displayName?: string; title?: string },
+    patch: { address?: AgentAddress; displayName?: string; title?: string; avatar?: string },
   ): boolean {
     return this.toWorkspace(workspaceId, { type: 'workspace.profile', workspaceId, ...patch });
   }
@@ -1255,12 +1307,20 @@ export class PersonalAgent extends EventEmitter {
   // --- chat with your own agent --------------------------------------------
 
   async chat(message: string): Promise<ChatOutput> {
+    // You are talking to the agent of the workspace you are looking at — its
+    // instructions, its grants. Two workspaces, two agents, two answers, and
+    // that is the point rather than an inconsistency.
+    const workspaceId = this.focusedWorkspaceId || undefined;
     const output = await this.provider.chat(
       {
-        self: this.knowledge.profile,
+        self: this.selfIn(workspaceId),
         message,
         history: this.chatHistory.slice(-12),
-        digest: this.digest('self', { notes: 12, artifacts: 12, tasks: 15, memories: 8 }, { query: message }),
+        digest: this.digest(
+          'self',
+          { notes: 12, artifacts: 12, tasks: 15, memories: 8 },
+          { query: message, workspaceId },
+        ),
         directory: this.directory,
         upcoming: this.knowledge.upcomingMeetings().map((m) => ({
           title: m.meeting.title,
@@ -2041,6 +2101,16 @@ export class PersonalAgent extends EventEmitter {
       case 'recall_memory': {
         if (!this.memory) return 'No other agents are connected yet, so there is no imported memory to search.';
 
+        // The tool is gated before it runs, not filtered after: an agent whose
+        // workspace was never granted imported memory should be told it cannot
+        // look, rather than quietly finding nothing and guessing.
+        const workspaceAgent = this.focusedWorkspaceId
+          ? this.knowledge.workspaceAgent(this.focusedWorkspaceId)
+          : undefined;
+        if (workspaceAgent && !agentMay(workspaceAgent, 'memory_recall')) {
+          return `I have no imported memory in this workspace — ${workspaceAgent.name} was not granted any. Your human can change that under Settings → Agent and access.`;
+        }
+
         // With an audience, answer the question the human actually cares about:
         // not "what do I know" but "what would I say to them".
         const audienceNeedle = s('audience');
@@ -2058,6 +2128,7 @@ export class PersonalAgent extends EventEmitter {
           requester,
           text: s('query'),
           limit: 8,
+          agent: workspaceAgent,
         });
         if (!hits.length) {
           return requester

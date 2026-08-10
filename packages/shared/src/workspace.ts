@@ -13,6 +13,7 @@
  */
 
 import type { AgentAddress, ArtifactRef } from './domain.js';
+import type { SidebarSection } from './sidebar.js';
 
 export type WorkspaceId = string;
 export type ChannelId = string;
@@ -145,6 +146,13 @@ export interface Workspace {
   description: string;
   /** A single emoji, drawn on the workspace rail. */
   icon: string;
+  /**
+   * An uploaded square image, as a `data:` URI, drawn instead of the emoji.
+   * Small enough to ride along in the workspace record — see `ICON_MAX_BYTES` —
+   * because a workspace icon that needs a second fetch is a workspace icon that
+   * flickers on every reconnect.
+   */
+  iconImage?: string;
   /** Accent colour for the rail tile and headers. */
   color: string;
   createdBy: AgentAddress;
@@ -189,6 +197,40 @@ export const WORKSPACE_COLORS = [
   '#f87171',
 ] as const;
 
+/**
+ * How big an uploaded icon may be, decoded.
+ *
+ * 96 KB is roughly a 128×128 PNG with room to spare, and it is small enough
+ * that every member's snapshot carrying every workspace icon is still cheap.
+ * The renderer downscales before it ever gets here; this is the wall on the
+ * relay, which cannot trust that it did.
+ */
+export const ICON_MAX_BYTES = 96 * 1024;
+
+export const ICON_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const;
+
+/**
+ * Check an uploaded icon before it is stored anywhere. Runs on the relay, so it
+ * assumes the sender is hostile: an unbounded `data:` URI in a record every
+ * member replicates is a denial-of-service dressed up as a preference.
+ */
+export function validateIconImage(dataUri: string): { ok: true } | { ok: false; error: string } {
+  if (!dataUri) return { ok: true };
+  const match = /^data:([a-z]+\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=]+)$/i.exec(dataUri);
+  if (!match) return { ok: false, error: 'An icon has to be a base64 data URI.' };
+  const [, mime, payload] = match as unknown as [string, string, string];
+  if (!(ICON_MIME_TYPES as readonly string[]).includes(mime.toLowerCase())) {
+    return { ok: false, error: `Icons can be ${ICON_MIME_TYPES.join(', ')}.` };
+  }
+  // base64 is 4 chars per 3 bytes; padding shaves one or two off the end.
+  const padding = payload.endsWith('==') ? 2 : payload.endsWith('=') ? 1 : 0;
+  const bytes = Math.floor((payload.length * 3) / 4) - padding;
+  if (bytes > ICON_MAX_BYTES) {
+    return { ok: false, error: `That icon is ${Math.round(bytes / 1024)} KB; the limit is ${ICON_MAX_BYTES / 1024} KB.` };
+  }
+  return { ok: true };
+}
+
 export const WORKSPACE_ICONS = [
   '🛰️', '🧭', '🪐', '⚡', '🌱', '🔭', '🧪', '🎛️', '📡', '🏗️', '🧩', '🌊',
 ] as const;
@@ -226,6 +268,12 @@ export interface WorkspaceMember {
   workspaceId: WorkspaceId;
   address: AgentAddress;
   displayName: string;
+  /**
+   * An uploaded square image, as a data URI. Per workspace, like the display
+   * name: the same person can be a photograph at work and a cartoon in a side
+   * project. Absent means "draw initials".
+   */
+  avatar?: string;
   title: string;
   bio: string;
   timezone: string;
@@ -569,7 +617,21 @@ export interface WorkspacePrefs {
   channels: Record<ChannelId, ChannelPrefs>;
   /** Sidebar sections the user collapsed. */
   collapsed: string[];
+  /**
+   * How this person arranged their own sidebar here: named sections, what is
+   * in them, what order. Empty means "the standard layout" rather than "no
+   * sections", so a workspace nobody customized follows the defaults as they
+   * change. See `resolveSections` in sidebar.ts.
+   */
+  sections?: SidebarSection[];
+  /** How tightly the channel list is drawn. */
+  density?: SidebarDensity;
+  /** Hide every row with nothing unread, across all sections. */
+  unreadOnly?: boolean;
 }
+
+/** Roomy is the default; compact fits about a third more rows on a laptop. */
+export type SidebarDensity = 'comfortable' | 'compact';
 
 export function defaultChannelPrefs(channelId: ChannelId): ChannelPrefs {
   return { channelId, notify: 'all', muted: false, starred: false };

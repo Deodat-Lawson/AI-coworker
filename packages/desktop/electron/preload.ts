@@ -95,6 +95,11 @@ const api: DesktopApi = {
     ipcRenderer.invoke('ch:remove', workspaceId, channelId, address),
   openDirectMessage: (workspaceId, addresses) => ipcRenderer.invoke('ch:dm', workspaceId, addresses),
 
+  saveWorkspaceAgent: (workspaceId, patch) => ipcRenderer.invoke('agent:save', workspaceId, patch),
+  grantAgentFolder: (workspaceId) => ipcRenderer.invoke('agent:grantFolder', workspaceId),
+  revokeAgentFolder: (workspaceId, folder) => ipcRenderer.invoke('agent:revokeFolder', workspaceId, folder),
+  agentIsolation: () => ipcRenderer.invoke('agent:isolation'),
+
   setChannelPrefs: (workspaceId, channelId, patch) =>
     ipcRenderer.invoke('prefs:channel', workspaceId, channelId, patch),
   setWorkspacePrefs: (workspaceId, patch) => ipcRenderer.invoke('prefs:workspace', workspaceId, patch),

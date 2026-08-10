@@ -37,7 +37,11 @@ import {
   type SourceState,
   type AccessDecision,
   type SharedProjection,
+  type WorkspaceAgent,
   SENSITIVITY_ORDER,
+  agentMaySeeSensitivity,
+  agentMayUseSourceKind,
+  agentSourceScope,
   decideAccess,
   decideAccessForRoom,
   defaultPolicy,
@@ -76,6 +80,13 @@ export interface QueryOptions {
   text?: string;
   topics?: MemoryTopic[];
   sources?: string[];
+  /**
+   * The workspace agent doing the asking. Its grants are applied *before* the
+   * audience decision: a memory the Acme agent was never given is not withheld
+   * politely, it is not in the room. Omit only for the owner's own tools (the
+   * Sources screen, coverage), never for anything that speaks in a workspace.
+   */
+  agent?: WorkspaceAgent;
   limit?: number;
   /** Include memories the agent may only acknowledge, not quote. Default true. */
   includeGists?: boolean;
@@ -410,10 +421,23 @@ export class MemoryIndex extends EventEmitter {
     const { owner, limit = 8, includeGists = true } = options;
     const terms = tokenize(options.text ?? '');
     const hits: RecallHit[] = [];
+    // Which workspace is asking, and therefore which agent's grants apply.
+    // `agentSourceScope` returns [] for an agent with no memory grant at all,
+    // and that empty list is a hard stop rather than "unfiltered" — the
+    // difference between the two is the whole isolation guarantee.
+    const scope = options.agent ? agentSourceScope(options.agent) : null;
+    if (scope !== null && scope.length === 0 && options.agent) return [];
 
     for (const record of this.recordsById.values()) {
       if (record.status !== 'active') continue;
       if (options.sources && !options.sources.includes(record.sourceId)) continue;
+      if (scope !== null && !scope.includes(record.sourceId)) continue;
+      if (options.agent) {
+        // The kind is a second gate, not a nicety: switching "Claude Code
+        // memory" off has to hold even for a source that was granted earlier.
+        if (!agentMayUseSourceKind(options.agent, record.sourceKind)) continue;
+        if (!agentMaySeeSensitivity(options.agent, record.policy.sensitivity)) continue;
+      }
       if (options.topics && !record.policy.topics.some((t) => options.topics!.includes(t))) continue;
 
       const decision = options.room
