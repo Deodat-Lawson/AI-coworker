@@ -52,7 +52,7 @@ const flagValue = (name) => {
 
 const only = flagValue('scenario');
 const saveAs = flagValue('save');
-const judgeModel = process.env.EVAL_JUDGE_MODEL ?? 'gemini-flash-latest';
+const judgeModel = process.env.EVAL_JUDGE_MODEL ?? 'muse-spark-1.2';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -245,7 +245,7 @@ async function main() {
   if (!apiKey) {
     console.error(
       'These evals need a real model: the offline brain would only be testing our own fixtures.\n' +
-        'Set GEMINI_API_KEY in your environment or in .env at the repo root.',
+        'Set META_API_KEY in your environment or in .env at the repo root.',
     );
     process.exit(2);
   }

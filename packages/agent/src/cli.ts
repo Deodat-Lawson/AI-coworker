@@ -25,7 +25,7 @@ import { loadEnvFromAncestors } from './env.js';
 import { createProvider } from './llm/index.js';
 import { MemoryIndex, syncMemory } from './memory/index.js';
 
-// Pick up GEMINI_API_KEY from a .env beside the repo before anything reads it.
+// Pick up META_API_KEY from a .env beside the repo before anything reads it.
 loadEnvFromAncestors();
 import { PERSONAS, findPersona, seedKnowledgeBase } from './seed.js';
 import { KnowledgeBase } from './store.js';

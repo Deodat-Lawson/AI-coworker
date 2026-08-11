@@ -115,19 +115,19 @@ vault's `.obsidian/app.json` so Obsidian opened on the same folder agrees.
 
 ### The brain
 
-Agents use **Gemini** when a key is available and fall back to a deterministic
-offline brain when it isn't, so the whole system runs end to end with no
-credentials.
+Agents use **Meta's model API** when a key is available and fall back to a
+deterministic offline brain when it isn't, so the whole system runs end to end
+with no credentials.
 
 ```bash
-cp .env.example .env      # then add GEMINI_API_KEY
+cp .env.example .env      # then add META_API_KEY
 ```
 
 The desktop app also takes a key in **Settings → Brain**, stored locally. Nothing
-is sent anywhere except the requests your agent makes to Google.
+is sent anywhere except the requests your agent makes to Meta.
 
-> On a free-tier key (5 requests/min) a meeting takes a few minutes: agents wait
-> out the quota and say so in their activity log rather than failing the turn.
+> On a rate-limited key a meeting takes a few minutes: agents wait out the quota
+> and say so in their activity log rather than failing the turn.
 
 ---
 
@@ -351,7 +351,7 @@ packages/
              wire protocol, and the vault index (links, tags, graph,
              frontmatter) — pure, so main and renderer agree
   agent/     knowledge base, the vault on disk, imported memory + connectors,
-             Gemini/offline brain, relay connections, workspace replica,
+             Meta/offline brain, relay connections, workspace replica,
              meeting logic
   server/    relay: workspace hub, accounts and sign-in, scheduling,
              meeting-room moderator

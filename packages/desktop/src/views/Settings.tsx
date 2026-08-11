@@ -566,15 +566,15 @@ function BrainPane({ state }: { state: AppState }) {
           {state.connection.apiKeySource === 'environment' ? ' (key from your environment)' : ''}
         </p>
         <Field
-          label="Gemini API key"
-          hint="Stored locally in this app's config. It never leaves your machine except in requests to Google. You can also set GEMINI_API_KEY in your environment or a .env file next to the app."
+          label="Meta API key"
+          hint="Stored locally in this app's config. It never leaves your machine except in requests to Meta. You can also set META_API_KEY in your environment or a .env file next to the app."
         >
           <div className="row">
             <input
               type="password"
               value={apiKey}
               placeholder={
-                state.connection.hasApiKey ? '•••••••• (a key is already set)' : 'Paste your Gemini API key'
+                state.connection.hasApiKey ? '•••••••• (a key is already set)' : 'Paste your Meta API key'
               }
               onChange={(e) => setApiKey(e.target.value)}
             />
@@ -606,7 +606,7 @@ function BrainPane({ state }: { state: AppState }) {
           </div>
         </Field>
         <Field label="Model">
-          <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="gemini-flash-latest" />
+          <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="muse-spark-1.2" />
         </Field>
         {!state.connection.providerLive ? (
           <p className="hint">

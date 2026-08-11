@@ -16,7 +16,7 @@ npm run eval -- --save baseline           # writes evals/reports/baseline.json
 npm run eval:selftest                     # does the judge actually catch anything?
 ```
 
-Needs `GEMINI_API_KEY` in the environment or `.env`. The offline brain would
+Needs `META_API_KEY` in the environment or `.env`. The offline brain would
 only be testing our own fixtures, so the eval refuses to run without a model.
 Exit code is 0 only if every bar is met, which makes it usable as a gate.
 
@@ -45,7 +45,7 @@ in review. So the judge receives each speaker's ground truth, including the
 items marked private that must never appear — which is what makes the leak test
 possible at all.
 
-The judge calls Gemini directly rather than through the agent's own provider. A
+The judge calls the Meta API directly rather than through the agent's own provider. A
 judge sharing a code path with the thing it judges inherits its bugs and stops
 being independent evidence.
 
@@ -78,7 +78,8 @@ should not be quoted.**
 Worth recording, because it is the argument for the harness existing:
 
 1. **Raw API errors spoken aloud in meetings.** On a 503 the agent said
-   `I have to pass this turn — Gemini 503: {`. `describeGeminiError` had
+   `I have to pass this turn — Gemini 503: {` (this predates the move to Meta).
+   The provider's `describe…Error` — now `describeMetaError` — had
    friendly cases for 429, 403 and timeouts, and 5xx fell through to the raw
    JSON body. Quality mean 3.87, one scenario scored 1/5 on resolution.
 2. **Agents talking about their own human in the third person.** Sarah's agent:

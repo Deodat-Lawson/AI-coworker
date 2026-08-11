@@ -59,7 +59,7 @@ import {
   type RecalledMemory,
   type ToolSpec,
   createProvider,
-  describeGeminiError,
+  describeMetaError,
 } from './llm/index.js';
 import { detectSources } from './connectors/index.js';
 import { MemoryIndex } from './memory/index.js';
@@ -805,7 +805,7 @@ export class PersonalAgent extends EventEmitter {
         this.activity('info', `Needs your input: ${q}`);
       }
     } catch (err) {
-      const reason = describeGeminiError(err);
+      const reason = describeMetaError(err);
       this.activity('error', `Turn failed (${turn.turnKind}): ${(err as Error).message}`);
       // Say something short and honest in the room rather than pasting an API
       // error into the transcript everyone else has to read.

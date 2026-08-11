@@ -428,7 +428,7 @@ export class MockProvider implements LLMProvider {
     if (has('search_knowledge') && text.length > 3) {
       const result = await run('search_knowledge', { query: text });
       return {
-        reply: `${result}\n\n(Running offline, so I'm keyword-matching rather than reasoning. Set GEMINI_API_KEY for the full agent.)`,
+        reply: `${result}\n\n(Running offline, so I'm keyword-matching rather than reasoning. Set META_API_KEY for the full agent.)`,
         actions,
       };
     }

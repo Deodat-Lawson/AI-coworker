@@ -24,7 +24,7 @@ import type { Appearance } from './theme.js';
 
 /** Which brain the agents use. The key itself never leaves the main process. */
 export interface BrainSettings {
-  /** The model id, e.g. `gemini-flash-latest`. Empty means "whatever ships". */
+  /** The model id, e.g. `muse-spark-1.2`. Empty means "whatever ships". */
   model: string;
   /**
    * Whether a key is configured, and where it came from. The renderer is told

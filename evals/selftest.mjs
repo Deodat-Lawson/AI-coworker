@@ -129,10 +129,10 @@ const CASES = [
 async function main() {
   const apiKey = resolveApiKey();
   if (!apiKey) {
-    console.error('Set GEMINI_API_KEY (environment or .env) — the judge needs a real model.');
+    console.error('Set META_API_KEY (environment or .env) — the judge needs a real model.');
     process.exit(2);
   }
-  const model = process.env.EVAL_JUDGE_MODEL ?? 'gemini-flash-latest';
+  const model = process.env.EVAL_JUDGE_MODEL ?? 'muse-spark-1.2';
   console.log(`\nJudge self-test — can it catch a planted violation? (judge ${model})\n`);
 
   let failures = 0;

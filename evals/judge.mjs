@@ -1,10 +1,10 @@
 /**
  * The judge.
  *
- * It calls Gemini directly rather than going through the agent's own provider.
- * That is deliberate: a judge that shares a code path with the thing it judges
- * inherits its bugs and its prompt, and stops being independent evidence. The
- * only thing they share is the API key.
+ * It calls the Meta API directly rather than going through the agent's own
+ * provider. That is deliberate: a judge that shares a code path with the thing
+ * it judges inherits its bugs and its prompt, and stops being independent
+ * evidence. The only thing they share is the API key.
  *
  * The judge is given the transcript AND each speaker's ground truth, because
  * most of the hardline criteria are unanswerable without it. "Sarah said PR
@@ -15,7 +15,32 @@
 
 import { HARDLINE, QUALITY } from './criteria.mjs';
 
-const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
+const API_BASE = (process.env.META_API_BASE ?? 'https://api.meta.ai/v1').replace(/\/+$/, '');
+
+/**
+ * Strict structured output seals every object: no extra keys, and every property
+ * listed in `required`. The schema below already declares `required` throughout,
+ * so this only has to add the seal.
+ */
+function seal(node) {
+  if (Array.isArray(node)) return node.map(seal);
+  if (!node || typeof node !== 'object') return node;
+  const out = {};
+  for (const [key, value] of Object.entries(node)) {
+    if (key === 'properties') {
+      out.properties = Object.fromEntries(Object.entries(value).map(([k, v]) => [k, seal(v)]));
+    } else if (key === 'items') {
+      out.items = seal(value);
+    } else {
+      out[key] = value;
+    }
+  }
+  if (out.type === 'object') {
+    out.additionalProperties = false;
+    out.required = Object.keys(out.properties ?? {});
+  }
+  return out;
+}
 
 const VERDICT_SCHEMA = {
   type: 'object',
@@ -132,7 +157,7 @@ function renderCriteria() {
  * Ask the judge. Retries on the rate limits a free-tier key hands out, because
  * a 429 is not a verdict.
  */
-export async function judge({ transcript, groundTruth, scenario, apiKey, model = 'gemini-flash-latest' }) {
+export async function judge({ transcript, groundTruth, scenario, apiKey, model = 'muse-spark-1.2' }) {
   const user = [
     `Scenario: ${scenario.name}`,
     scenario.intent ? `What this scenario is meant to test: ${scenario.intent}` : '',
@@ -150,23 +175,26 @@ export async function judge({ transcript, groundTruth, scenario, apiKey, model =
     .join('\n');
 
   const body = {
-    systemInstruction: { parts: [{ text: SYSTEM }] },
-    contents: [{ role: 'user', parts: [{ text: user }] }],
-    generationConfig: {
-      responseMimeType: 'application/json',
-      responseSchema: VERDICT_SCHEMA,
-      // A judge that varies run to run cannot show an improvement.
-      temperature: 0,
-      maxOutputTokens: 16_384,
+    model,
+    messages: [
+      { role: 'system', content: SYSTEM },
+      { role: 'user', content: user },
+    ],
+    response_format: {
+      type: 'json_schema',
+      json_schema: { name: 'verdict', strict: true, schema: seal(VERDICT_SCHEMA) },
     },
+    // A judge that varies run to run cannot show an improvement.
+    temperature: 0,
+    max_completion_tokens: 16_384,
   };
 
   let lastError;
   for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
-      const response = await fetch(`${ENDPOINT}/${model}:generateContent?key=${apiKey}`, {
+      const response = await fetch(`${API_BASE}/chat/completions`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
         body: JSON.stringify(body),
       });
       const text = await response.text();
@@ -180,7 +208,7 @@ export async function judge({ transcript, groundTruth, scenario, apiKey, model =
         throw new Error(`judge HTTP ${response.status}: ${text.slice(0, 300)}`);
       }
       const payload = JSON.parse(text);
-      const out = payload?.candidates?.[0]?.content?.parts?.[0]?.text;
+      const out = payload?.choices?.[0]?.message?.content;
       if (!out) throw new Error(`judge returned no content: ${text.slice(0, 300)}`);
       return JSON.parse(out);
     } catch (err) {
@@ -193,8 +221,10 @@ export async function judge({ transcript, groundTruth, scenario, apiKey, model =
 }
 
 function retryDelay(body) {
-  const match = /"retryDelay"\s*:\s*"(\d+)s"/.exec(body);
-  return match ? Number(match[1]) * 1000 + 500 : null;
+  const match = /"retry_?(?:after|delay)(?:_ms)?"\s*:\s*"?(\d+)(s)?"?/i.exec(body);
+  if (!match) return null;
+  const isMs = /_ms"/i.test(match[0]) && !match[2];
+  return (isMs ? Number(match[1]) : Number(match[1]) * 1000) + 500;
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

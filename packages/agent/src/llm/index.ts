@@ -1,15 +1,17 @@
-import { GeminiProvider, type GeminiProviderOptions } from './gemini.js';
+import { MetaProvider, type MetaProviderOptions } from './meta.js';
 import { MockProvider } from './mock.js';
 import type { LLMProvider } from './types.js';
 
 export * from './types.js';
 export {
-  GeminiProvider,
+  MetaProvider,
   DEFAULT_MODEL,
-  toGeminiSchema,
-  describeGeminiError,
+  DEFAULT_API_BASE,
+  toMetaSchema,
+  describeMetaError,
   parseRetryDelayMs,
-} from './gemini.js';
+  parseRetryAfterHeader,
+} from './meta.js';
 export { MockProvider } from './mock.js';
 export { renderDigest } from './prompt.js';
 
@@ -20,20 +22,14 @@ export interface ProviderChoice {
 }
 
 export function resolveApiKey(explicit?: string): string | undefined {
-  return (
-    explicit ||
-    process.env.GEMINI_API_KEY ||
-    process.env.GOOGLE_API_KEY ||
-    process.env.GOOGLE_GENAI_API_KEY ||
-    undefined
-  );
+  return explicit || process.env.META_API_KEY || process.env.LLAMA_API_KEY || undefined;
 }
 
 /**
- * Live Gemini when a key is available, deterministic offline brain otherwise.
+ * Live Meta when a key is available, deterministic offline brain otherwise.
  * `AI_COWORKER_OFFLINE=1` forces offline (used by tests).
  */
-export function createProvider(options: Partial<GeminiProviderOptions> = {}): ProviderChoice {
+export function createProvider(options: Partial<MetaProviderOptions> = {}): ProviderChoice {
   if (process.env.AI_COWORKER_OFFLINE === '1') {
     return { provider: new MockProvider(), reason: 'AI_COWORKER_OFFLINE=1' };
   }
@@ -41,12 +37,12 @@ export function createProvider(options: Partial<GeminiProviderOptions> = {}): Pr
   if (!apiKey) {
     return {
       provider: new MockProvider(),
-      reason: 'no Gemini API key found — running the offline brain',
+      reason: 'no Meta API key found — running the offline brain',
     };
   }
-  const model = options.model ?? process.env.GEMINI_MODEL;
+  const model = options.model ?? process.env.META_MODEL;
   return {
-    provider: new GeminiProvider({ ...options, apiKey, model }),
-    reason: 'using Gemini',
+    provider: new MetaProvider({ ...options, apiKey, model }),
+    reason: 'using Meta',
   };
 }

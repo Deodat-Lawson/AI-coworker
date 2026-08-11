@@ -11,6 +11,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import {
+  DEFAULT_MODEL,
   MemoryIndex,
   PersonalAgent,
   KnowledgeBase,
@@ -171,9 +172,9 @@ function applyMenu(): void {
 interface Config {
   knowledgeDir?: string;
   relayUrl?: string;
-  /** Set from Settings. Falls back to GEMINI_API_KEY in the environment or a .env file. */
-  geminiApiKey?: string;
-  geminiModel?: string;
+  /** Set from Settings. Falls back to META_API_KEY in the environment or a .env file. */
+  metaApiKey?: string;
+  metaModel?: string;
   /** dark | light | system. Lives here so the window can be painted before the renderer loads. */
   appearance?: Appearance;
 }
@@ -261,9 +262,9 @@ function defaultKnowledgeDir(): string {
  */
 function brainSettings(): BrainSettings {
   return {
-    model: config.geminiModel ?? '',
-    hasApiKey: Boolean(resolveApiKey(config.geminiApiKey)),
-    apiKeySource: config.geminiApiKey ? 'settings' : resolveApiKey() ? 'environment' : 'none',
+    model: config.metaModel ?? '',
+    hasApiKey: Boolean(resolveApiKey(config.metaApiKey)),
+    apiKeySource: config.metaApiKey ? 'settings' : resolveApiKey() ? 'environment' : 'none',
   };
 }
 
@@ -294,9 +295,9 @@ async function applySettingsPatch(patch: GlobalSettingsPatch): Promise<GlobalSet
     // An empty string is "forget the key I gave you", which is different from
     // not mentioning the key at all.
     if (patch.brain.apiKey !== undefined) {
-      config.geminiApiKey = patch.brain.apiKey.trim() || undefined;
+      config.metaApiKey = patch.brain.apiKey.trim() || undefined;
     }
-    if (patch.brain.model !== undefined) config.geminiModel = patch.brain.model.trim() || undefined;
+    if (patch.brain.model !== undefined) config.metaModel = patch.brain.model.trim() || undefined;
     applyBrain();
   }
   if (patch.relayUrl !== undefined && patch.relayUrl !== config.relayUrl) {
@@ -316,8 +317,8 @@ async function applySettingsPatch(patch: GlobalSettingsPatch): Promise<GlobalSet
 function applyBrain(): void {
   if (!agent) return;
   const { provider, reason } = createProvider({
-    apiKey: config.geminiApiKey,
-    model: config.geminiModel,
+    apiKey: config.metaApiKey,
+    model: config.metaModel,
   });
   agent.provider = provider;
   agent.providerReason = reason;
@@ -634,9 +635,9 @@ function buildState(): AppState {
         providerName: 'not started',
         providerLive: false,
         providerReason: '',
-        hasApiKey: Boolean(resolveApiKey(config.geminiApiKey)),
-        apiKeySource: config.geminiApiKey ? 'settings' : resolveApiKey() ? 'environment' : 'none',
-        model: config.geminiModel ?? process.env.GEMINI_MODEL ?? 'gemini-flash-latest',
+        hasApiKey: Boolean(resolveApiKey(config.metaApiKey)),
+        apiKeySource: config.metaApiKey ? 'settings' : resolveApiKey() ? 'environment' : 'none',
+        model: config.metaModel ?? process.env.META_MODEL ?? DEFAULT_MODEL,
       },
       directory: [],
       projects: [],
@@ -687,9 +688,9 @@ function buildState(): AppState {
       providerReason: agent.providerReason,
       // Never send the key itself to the renderer — only whether one is set and
       // where it came from.
-      hasApiKey: Boolean(resolveApiKey(config.geminiApiKey)),
-      apiKeySource: config.geminiApiKey ? 'settings' : resolveApiKey() ? 'environment' : 'none',
-      model: config.geminiModel ?? process.env.GEMINI_MODEL ?? 'gemini-flash-latest',
+      hasApiKey: Boolean(resolveApiKey(config.metaApiKey)),
+      apiKeySource: config.metaApiKey ? 'settings' : resolveApiKey() ? 'environment' : 'none',
+      model: config.metaModel ?? process.env.META_MODEL ?? DEFAULT_MODEL,
     },
     directory: agent.directory,
     projects: knowledge.projects,
@@ -964,8 +965,8 @@ async function startAgent(dir: string): Promise<void> {
   startReminders();
 
   const { provider, reason } = createProvider({
-    apiKey: config.geminiApiKey,
-    model: config.geminiModel,
+    apiKey: config.metaApiKey,
+    model: config.metaModel,
   });
   agent = new PersonalAgent({
     knowledge,
