@@ -55,22 +55,46 @@ Read from `.env` next to the app, or the real environment.
 
 ## Deploy
 
+Two scripts, same relay, different hosts. Both are idempotent — run again to
+ship a new build to the same URL with the accounts intact — and both put
+everything in one resource group, so `az group delete -n stead-rg --yes`
+removes all of it.
+
+### App Service B1 — what's running today, ~$12/mo
+
 ```bash
 az login
+./scripts/deploy-azure-appservice.sh
+```
+
+Linux B1 at $0.0170/hour, and that is the entire bill: `/home` is persistent, so
+the state files need no storage account, and a zip deploy needs no container
+registry. TLS and `wss` on `*.azurewebsites.net` are free. Always On is set
+because the relay arms an in-process timer per booked meeting — a plan that
+sleeps misses them.
+
+Knobs: `STEAD_RG`, `STEAD_LOCATION`, `STEAD_PLAN`, `STEAD_APP`,
+`AI_COWORKER_RELAY_NAME`, `AI_COWORKER_WORKSPACE`.
+
+One wrinkle worth knowing if you edit the staging step: `npm install` prunes
+anything it thinks is extraneous, so `@ai-coworker/shared` is copied into
+`node_modules` *after* the install, not before. A `file:` dependency would leave
+a symlink instead, and symlinks do not survive the zip.
+
+### Container Apps — ~$19/mo
+
+```bash
 ./scripts/deploy-azure.sh
 ```
 
-Idempotent — run it again to ship a new image to the same URL with the same
-accounts intact. Knobs: `STEAD_RG`, `STEAD_LOCATION`, `STEAD_APP`,
-`STEAD_ACR`, `STEAD_STORAGE`, `AI_COWORKER_RELAY_NAME`.
+Builds the image in Azure Container Registry (no local Docker push), mounts an
+Azure Files share at `/data`, and pins to exactly one replica. Costs about $7/mo
+more — $5 of that is ACR Basic — and buys a cleaner container story and a
+shorter path to scaling out later.
 
-It builds the image in Azure Container Registry (no local Docker push), mounts
-an Azure Files share at `/data` for the three state files, and pins the app to
-exactly one replica. Everything lands in one resource group:
-`az group delete -n stead-rg --yes` removes all of it.
+### Then, on each machine
 
-Then, in each person's desktop app, put `wss://<fqdn>` in the relay field on the
-sign-in screen.
+Put `wss://<fqdn>` in the relay field on the desktop app's sign-in screen.
 
 ---
 
