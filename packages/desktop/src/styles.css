@@ -111,6 +111,40 @@
   --preview-light-bg: #ffffff;
   --preview-light-rail: #e7e9ef;
 
+  /* The graph's categorical ramp. Eight hues held at roughly one lightness so
+     no group shouts louder than another, assigned to whatever the graph is
+     grouping by — a folder, a tag, a kind. Eight is the point where a legend
+     stops being readable, so the ninth group and beyond wrap around. */
+  --graph-1: #6fa8ff;
+  --graph-2: #3fc9b2;
+  --graph-3: #6ed36a;
+  --graph-4: #e3b23c;
+  --graph-5: #ef8a54;
+  --graph-6: #f2789c;
+  --graph-7: #ad8bf5;
+  --graph-8: #8bd0e8;
+  /* Nodes that are not notes: a project, an artifact, a task, a tag, a link to a
+     note that does not exist yet, an attachment. Deliberately outside the ramp
+     so none of them ever reads as one of the note groups. */
+  --graph-project: #f6c445;
+  --graph-artifact: #4fd1c5;
+  --graph-task: #f78da7;
+  --graph-tag: #a99cd8;
+  --graph-unresolved: #464d5e;
+  --graph-attachment: #7c8598;
+  --graph-link: rgba(150, 160, 180, 0.42);
+  --graph-link-dim: rgba(120, 130, 150, 0.1);
+  --graph-label: rgba(214, 220, 232, 0.92);
+  --graph-label-halo: rgba(10, 12, 16, 0.82);
+  /* The dot grid the canvas pans over, and the light in the middle of a node. */
+  --graph-grid: rgba(255, 255, 255, 0.055);
+  --graph-core: rgba(255, 255, 255, 0.42);
+
+  /* The strip along the top of the window that drags it. Every view leaves this
+     much room at the top so nothing you need to click ends up underneath it —
+     or under the traffic lights, which macOS draws in the same band. */
+  --titlebar-h: 34px;
+
   --radius: 10px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
@@ -187,6 +221,29 @@
   --shadow-sm: 0 6px 18px rgba(18, 24, 36, 0.12);
   --scrim: rgba(22, 27, 36, 0.4);
 
+  /* The same eight hues, walked down instead of up: a node has to hold its own
+     against white, so each one darkens rather than brightening. */
+  --graph-1: #2f6fd0;
+  --graph-2: #0f7d75;
+  --graph-3: #2f8b43;
+  --graph-4: #8f6408;
+  --graph-5: #bd5019;
+  --graph-6: #bd3b61;
+  --graph-7: #6741bd;
+  --graph-8: #1c718f;
+  --graph-project: #9a6b04;
+  --graph-artifact: #0d7c74;
+  --graph-task: #b93a63;
+  --graph-tag: #6a5da4;
+  --graph-unresolved: #b6bcc7;
+  --graph-attachment: #78828f;
+  --graph-link: rgba(88, 98, 118, 0.38);
+  --graph-link-dim: rgba(88, 98, 118, 0.1);
+  --graph-label: rgba(28, 34, 46, 0.9);
+  --graph-label-halo: rgba(255, 255, 255, 0.9);
+  --graph-grid: rgba(20, 26, 38, 0.05);
+  --graph-core: rgba(255, 255, 255, 0.42);
+
   /* Darker so a 9px bead still reads against white. */
   --list-blue: #2563eb;
   --list-teal: #0d9488;
@@ -217,6 +274,35 @@ body {
   font-size: 14px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+}
+
+/* =========================================================================
+   The window's own title bar
+   -------------------------------------------------------------------------
+   There is no native one. This band is what you grab to move the window, and
+   the room macOS needs for the traffic lights it floats over our chrome. It is
+   invisible by design: every view underneath it already keeps its top
+   `--titlebar-h` clear, so the band reads as the natural breathing room above
+   a sidebar rather than as a bar.
+
+   A drag region takes the mouse events in its own rectangle, so this band is a
+   standing constraint on every view: put nothing clickable in the top
+   `--titlebar-h`. That is not a new rule — the traffic lights were already
+   there — it is the old rule finally being enforced by something. A control
+   that genuinely belongs up there has to come out above z-index 30 and set
+   `-webkit-app-region: no-drag` on itself.
+   ========================================================================= */
+
+.window-drag {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--titlebar-h);
+  /* Over the panes, under every dialog, menu, popover and toast. */
+  z-index: 30;
+  -webkit-app-region: drag;
+  app-region: drag;
 }
 
 button {

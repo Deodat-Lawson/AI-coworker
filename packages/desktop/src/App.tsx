@@ -407,7 +407,7 @@ export default function App() {
         ) : section === 'knowledge' ? (
           // The vault runs its own layout edge to edge; everything else sits in
           // the standard padded column.
-          <Knowledge state={state} />
+          <Knowledge state={state} onOpenTasks={() => goToSection('tasks')} />
         ) : section === 'tasks' ? (
           // The to-do list belongs to you rather than to a workspace, so it does
           // not wait for one.

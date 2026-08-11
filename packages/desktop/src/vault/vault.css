@@ -51,36 +51,120 @@
 
 /* --- ribbon --------------------------------------------------------------- */
 
+/* Every column starts below the window's drag band, so the traffic lights have
+   the top-left corner to themselves and nothing up there is unclickable. */
 .ob-ribbon {
   grid-row: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  padding: 8px 6px;
+  padding: calc(var(--titlebar-h) + 6px) 7px 8px;
   background: var(--ob-bg-alt);
   border-right: 1px solid var(--ob-border);
 }
 .ob-ribbon-spacer {
   flex: 1;
 }
+
+/* A rule between "things you do to a note" and "the records beside the notes".
+   Two groups of five read as two groups; ten in a line reads as a wall. */
+.ob-ribbon-rule {
+  width: 16px;
+  height: 1px;
+  flex: 0 0 auto;
+  margin: 6px 0;
+  background: var(--ob-border);
+}
+
 .ribbon-button {
-  width: 30px;
-  height: 30px;
+  position: relative;
+  width: 32px;
+  height: 32px;
   display: grid;
   place-items: center;
   border: none;
   background: transparent;
   color: var(--ob-text-faint);
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 0;
-  font-size: 15px;
   line-height: 1;
+  transition: color 0.12s ease, background 0.12s ease;
 }
 .ribbon-button:hover:not(:disabled) {
   background: var(--ob-hover);
   color: var(--ob-text);
   border-color: transparent;
+}
+/* Which of these you are looking at right now. Nothing used to say. */
+.ribbon-button.is-active {
+  color: var(--accent);
+  background: var(--ob-active);
+}
+.ribbon-button.is-active::before {
+  content: '';
+  position: absolute;
+  left: -7px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2px;
+  height: 18px;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
+}
+
+/* The label, on hover, immediately — rather than a native tooltip a second and
+   a half later, which is far too late to answer "what is this icon". */
+.ribbon-tip {
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: max-content;
+  max-width: 236px;
+  padding: 6px 10px 7px;
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--ob-border);
+  box-shadow: var(--shadow-sm);
+  color: var(--ob-text);
+  text-align: left;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+  z-index: 20;
+}
+.ribbon-button:hover .ribbon-tip,
+.ribbon-button:focus-visible .ribbon-tip {
+  opacity: 1;
+}
+/* The name on one line, and under it — where there is one — the sentence that
+   says what the thing actually is. Stacked, because a name and its definition
+   run together are worse than the icon on its own. */
+.ribbon-tip-name {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ribbon-tip-hint {
+  font-size: 11.5px;
+  font-weight: 400;
+  line-height: 1.35;
+  color: var(--ob-text-dim);
+  white-space: normal;
+}
+.ribbon-tip-key {
+  flex: 0 0 auto;
+  color: var(--ob-text-faint);
+  font-size: 11px;
+  font-family: var(--mono);
 }
 
 /* --- sidebars ------------------------------------------------------------- */
@@ -91,6 +175,7 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  padding-top: var(--titlebar-h);
   background: var(--ob-bg-alt);
   border-right: 1px solid var(--ob-border);
   overflow: hidden;
@@ -459,9 +544,15 @@
   align-items: center;
   gap: 4px;
   padding: 4px 6px;
+  padding-top: calc(var(--titlebar-h) + 4px);
   border-bottom: 1px solid var(--ob-border);
   background: var(--ob-bg-alt);
   flex: 0 0 auto;
+}
+/* Only the first row of panes is under the drag band; a pane split downwards
+   sits in the middle of the window and gets its tabs back. */
+.ob-main.is-column .ob-leaf + .ob-leaf .tab-bar {
+  padding-top: 4px;
 }
 .tab-nav {
   display: flex;
@@ -549,44 +640,472 @@
   text-align: center;
   color: var(--ob-text-faint);
   padding: 40px;
+  max-width: 460px;
 }
 .leaf-empty-title {
-  font-size: 15px;
-  margin-bottom: 16px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ob-text);
+}
+.leaf-empty-sub {
+  margin: 8px 0 20px;
+  color: var(--ob-text-dim);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.leaf-empty-sub code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--code-bg);
+  font-family: var(--mono);
+  font-size: 12px;
 }
 .leaf-empty-actions {
   display: flex;
   gap: 8px;
   justify-content: center;
-  margin-bottom: 24px;
+  margin-bottom: 26px;
 }
 .leaf-empty-recent {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  max-width: 320px;
-  margin: 0 auto;
+  gap: 1px;
+  text-align: left;
+  padding-top: 16px;
+  border-top: 1px solid var(--ob-border);
+}
+.leaf-empty-recent-head {
+  padding: 0 8px 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ob-text-faint);
 }
 .leaf-empty-recent button {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 5px 9px;
+  border: none;
+  border-radius: 6px;
   background: transparent;
-  border-color: transparent;
   color: var(--ob-text-dim);
   text-align: left;
+  font-size: 13px;
 }
 .leaf-empty-recent button:hover:not(:disabled) {
   background: var(--ob-hover);
   border-color: transparent;
+  color: var(--ob-text);
+}
+.leaf-recent-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.leaf-recent-where {
+  margin-left: auto;
+  flex: 0 0 auto;
+  color: var(--ob-text-faint);
+  font-size: 11.5px;
 }
 
-.extra-view,
-.structured {
+/* One scroll container, not two. This used to be a scrolling, padded
+   `.extra-view` wrapping a scrolling, padded, `height: 100%` child, which is how
+   a page ends up with a nested scrollbar, a horizontal scrollbar, and a file
+   path running off the right edge. The wrapper scrolls; the content inside it is
+   a column with a width. */
+.extra-view {
   overflow-y: auto;
-  padding: 26px 32px 48px;
+  /* Never sideways. A filesystem path is the usual culprit — one long enough to
+     widen the pane put a horizontal scrollbar under every card on the page. */
+  overflow-x: hidden;
   height: 100%;
+  min-width: 0;
+  padding: 26px 28px 62px;
+  /* A classic 15px scrollbar cutting across a card is the difference between a
+     page and a document viewer. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+  /* Narrow panes are the normal case here, not the exception: both sidebars open
+     leaves the middle around 400px. The rules keyed off this are sized to the
+     pane, which is the thing that is actually narrow — a window-width media
+     query would call a 1400px window roomy while the pane inside it is not. */
+  container-type: inline-size;
 }
-.extra-view .card,
-.structured .card {
+.extra-view::-webkit-scrollbar {
+  width: 9px;
+}
+.extra-view::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 5px;
+}
+.extra-view::-webkit-scrollbar-thumb:hover {
+  background: var(--border-stronger);
+}
+.extra-view::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.extra-view .card {
   max-width: 860px;
+}
+/* Paths and URLs have no spaces to break at, so they are given permission to
+   break anywhere rather than deciding how wide the page is. */
+.extra-view .card-sub,
+.extra-view .hint {
+  overflow-wrap: anywhere;
+}
+
+/* --- records: projects, artifacts, tasks ---------------------------------- */
+
+.rec {
+  max-width: 900px;
+}
+
+.rec-head {
+  margin-bottom: 26px;
+}
+.rec-head-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+}
+.rec-head-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  margin-top: 1px;
+  border-radius: 10px;
+  background: var(--ob-active);
+  color: var(--accent);
+}
+.rec-head-text {
+  flex: 1;
+  min-width: 0;
+}
+.rec-head-text h1 {
+  margin: 0;
+  font-size: 21px;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+/* The sentence that says what the word means. Wide enough to be a definition,
+   narrow enough to be read. */
+.rec-definition {
+  margin: 7px 0 0;
+  max-width: 62ch;
+  color: var(--ob-text-dim);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+.rec-head-action {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rec-head-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0 0 51px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ob-border);
+  color: var(--ob-text-faint);
+  font-size: 12px;
+}
+.rec-dir {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ob-text-faint);
+  font-size: 12px;
+  max-width: 380px;
+}
+.rec-dir:hover:not(:disabled) {
+  background: var(--ob-hover);
+  color: var(--ob-text);
+  border-color: transparent;
+}
+/* A path is a fact you check, not prose: it never wraps to a second line. */
+.rec-dir-path {
+  font-family: var(--mono);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rec-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.rec-card {
+  padding: 14px 16px;
+  border: 1px solid var(--ob-border);
+  border-radius: 11px;
+  background: var(--ob-bg-raised);
+  transition: border-color 0.12s ease;
+}
+.rec-card:hover {
+  border-color: var(--border-strong);
+}
+.rec-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.rec-card-head h2 {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rec-card-body {
+  margin: 7px 0 0;
+  color: var(--ob-text-dim);
+  font-size: 13px;
+  line-height: 1.55;
+  max-width: 68ch;
+}
+.rec-card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-top: 11px;
+  color: var(--ob-text-faint);
+  font-size: 12px;
+}
+
+/* Editing is a thing you do to one row, so the buttons live on that row —
+   revealed on hover, because four rows of "edit delete" is a wall of verbs. */
+.rec-card-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.rec-card:hover .rec-card-actions,
+.rec-card:focus-within .rec-card-actions {
+  opacity: 1;
+}
+.rec-card-actions .ghost {
+  padding: 3px 8px;
+  font-size: 12px;
+  color: var(--ob-text-faint);
+}
+.rec-card-actions .ghost:hover:not(:disabled) {
+  background: var(--ob-hover);
+  color: var(--ob-text);
+  border-color: transparent;
+}
+.rec-card-actions .ghost.is-danger:hover:not(:disabled) {
+  background: var(--bad-tint);
+  color: var(--bad);
+}
+.rec-card-actions .ghost .icon {
+  display: block;
+}
+
+.rec-pill {
+  flex: 0 0 auto;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-button);
+  color: var(--ob-text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-transform: lowercase;
+}
+.rec-pill.is-good {
+  border-color: var(--good-border);
+  background: var(--good-tint);
+  color: var(--good);
+}
+.rec-pill.is-warn {
+  border-color: var(--warn-border);
+  background: var(--warn-tint-hi);
+  color: var(--warn);
+}
+.rec-pill.is-bad {
+  border-color: var(--bad-border);
+  background: var(--bad-tint-mid);
+  color: var(--bad);
+}
+
+/* The kind of artifact, spelled rather than drawn. Seven icons for seven kinds
+   would be seven more guesses; "PR" and "Demo" need no key. */
+.rec-kind {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--ob-active);
+  color: var(--accent);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.rec-visibility {
+  flex: 0 0 auto;
+  color: var(--ob-text-faint);
+  font-size: 11px;
+}
+.rec-visibility.is-private {
+  color: var(--warn);
+}
+
+.rec-chip {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--ob-hover);
+  color: var(--ob-text-dim);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.rec-chip.is-quiet {
+  background: transparent;
+  border: 1px dashed var(--ob-border);
+  color: var(--ob-text-faint);
+}
+
+.rec-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 12px;
+}
+.rec-link:hover {
+  text-decoration: underline;
+}
+
+.rec-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+  border: 1px solid var(--accent-border);
+  border-radius: 11px;
+  background: var(--ob-bg-raised);
+}
+.rec-form .row {
+  display: flex;
+  gap: 12px;
+}
+.rec-form .row > .field {
+  flex: 1;
+  min-width: 0;
+}
+.rec-form textarea {
+  min-height: 66px;
+  resize: vertical;
+}
+.rec-form-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.rec-empty {
+  margin-top: 8px;
+  padding: 40px 32px;
+  border: 1px dashed var(--ob-border);
+  border-radius: 12px;
+  text-align: center;
+}
+.rec-empty-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 13px;
+  background: var(--ob-hover);
+  color: var(--ob-text-faint);
+  margin-bottom: 12px;
+}
+.rec-empty-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+.rec-empty-body {
+  margin: 7px auto 16px;
+  max-width: 46ch;
+  color: var(--ob-text-dim);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+/* --- records in a narrow pane -------------------------------------------- */
+
+@container (max-width: 560px) {
+  /* The "new project" button drops under the heading rather than squeezing the
+     title into two words a line. */
+  .rec-head-main {
+    flex-wrap: wrap;
+  }
+  /* Claim the whole line, or the definition shrinks to a column of two words
+     instead of the button giving way. */
+  .rec-head-text {
+    flex: 1 0 calc(100% - 51px);
+  }
+  .rec-head-action {
+    order: 3;
+    margin-top: 10px;
+  }
+  .rec-head-meta {
+    margin-left: 0;
+  }
+  /* Three fields side by side in 400px is three fields nobody can read. */
+  .rec-form .row {
+    flex-direction: column;
+    gap: 12px;
+  }
+  /* Sources brings its own markup rather than the record frame's, and has the
+     same problem: a heading and its buttons do not share 400px. */
+  .extra-view .card-head {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .rec-card-head {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .rec-card-head h2 {
+    flex: 1 0 100%;
+    white-space: normal;
+  }
+  /* Always visible: hover-to-reveal is fine when the row is wide enough to
+     absorb the buttons, and a guessing game when it is not. */
+  .rec-card-actions {
+    opacity: 1;
+  }
+  .rec-card-actions {
+    margin-left: 0;
+  }
 }
 
 /* --- note view ------------------------------------------------------------ */
@@ -1220,27 +1739,168 @@
 }
 .graph-controls {
   position: absolute;
-  top: 10px;
-  right: 12px;
+  top: 12px;
+  right: 14px;
   display: flex;
   gap: 6px;
   align-items: flex-start;
 }
 .graph-filter {
-  width: 150px;
-  padding: 4px 9px;
+  width: 158px;
+  padding: 5px 10px;
   font-size: 12px;
+}
+.graph-btn {
+  padding: 5px 10px;
+  font-size: 12px;
+  color: var(--ob-text-dim);
+  background: var(--bg-button);
+  border: 1px solid var(--ob-border);
+}
+.graph-btn.is-on {
+  color: var(--accent);
+  border-color: var(--accent-border);
+  background: var(--ob-active);
 }
 .graph-panel {
   position: absolute;
-  top: 34px;
+  top: 36px;
   right: 0;
-  width: 220px;
-  background: var(--ob-bg-raised);
+  width: 226px;
+  background: var(--bg-elevated);
   border: 1px solid var(--ob-border);
+  border-radius: 10px;
+  padding: 11px 12px 13px;
+  box-shadow: var(--shadow);
+}
+.graph-section {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ob-text-faint);
+  margin: 4px 0 6px;
+}
+.graph-section:not(:first-child) {
+  margin-top: 14px;
+  padding-top: 11px;
+  border-top: 1px solid var(--ob-border);
+}
+
+/* One choice out of three, shown as three. A dropdown would hide two thirds of
+   the answer to "what do these colours mean". */
+.graph-segment {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
   border-radius: 8px;
-  padding: 10px;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+  background: var(--ob-hover);
+}
+.graph-segment button {
+  flex: 1;
+  padding: 4px 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ob-text-dim);
+  font-size: 11.5px;
+  text-transform: capitalize;
+}
+.graph-segment button:hover:not(:disabled) {
+  color: var(--ob-text);
+  background: transparent;
+  border-color: transparent;
+}
+.graph-segment button.is-on {
+  background: var(--bg-elevated);
+  color: var(--ob-text);
+  box-shadow: var(--shadow-sm);
+}
+
+/* --- graph legend --------------------------------------------------------- */
+
+/* The colours are only worth having if something says what they mean, and the
+   cheapest place to put that is the thing you click to use them. */
+.graph-legend {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  max-width: 232px;
+  max-height: 46%;
+  overflow-y: auto;
+  padding: 8px 8px 9px;
+  border-radius: 10px;
+  border: 1px solid var(--ob-border);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-sm);
+  scrollbar-width: thin;
+}
+.graph-legend-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 1px 6px 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ob-text-faint);
+}
+.graph-legend-clear {
+  margin-left: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: 10.5px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.graph-legend-clear:hover:not(:disabled) {
+  background: transparent;
+  border-color: transparent;
+  text-decoration: underline;
+}
+.graph-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ob-text-dim);
+  font-size: 12px;
+  text-align: left;
+}
+.graph-legend-row:hover:not(:disabled) {
+  background: var(--ob-hover);
+  border-color: transparent;
+  color: var(--ob-text);
+}
+.graph-legend-row.is-on {
+  background: var(--ob-active);
+  color: var(--ob-text);
+}
+.graph-swatch {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+}
+.graph-legend-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.graph-legend-count {
+  flex: 0 0 auto;
+  color: var(--ob-text-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 .graph-row {
   display: flex;

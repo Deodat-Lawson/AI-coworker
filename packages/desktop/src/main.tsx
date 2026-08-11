@@ -2,6 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 
 import App from './App.js';
+import WindowDrag from './components/WindowDrag.js';
 import { applyMirroredTheme } from './lib/theme.js';
 import './styles.css';
 import 'katex/dist/katex.min.css';
@@ -16,6 +17,10 @@ if (!container) throw new Error('missing #root');
 
 createRoot(container).render(
   <React.StrictMode>
+    {/* Outside <App /> on purpose: you have to be able to move the window while
+        you are still signing in, which is a screen App renders instead of the
+        shell. */}
+    <WindowDrag />
     <App />
   </React.StrictMode>,
 );

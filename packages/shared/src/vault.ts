@@ -823,11 +823,41 @@ export interface VaultSettings {
   hotkeys: Record<string, string>;
 }
 
+/**
+ * What a colour in the graph means.
+ *
+ * A graph drawn in one colour tells you the shape of your notes and nothing
+ * about them. Grouping is the cheapest way to make it say something, and which
+ * grouping is useful depends on how the vault is kept: by folder if you file
+ * things, by tag if you label them, by kind if you mostly want to see what is
+ * a note and what is a hole where a note should be.
+ */
+export type GraphColorBy = 'folder' | 'tag' | 'kind';
+
 export interface GraphSettings {
   showTags: boolean;
   showAttachments: boolean;
   showUnresolved: boolean;
   showArrows: boolean;
+  colorBy: GraphColorBy;
+  /**
+   * Draw the structured records — projects, artifacts, tasks — alongside the
+   * notes, joined to the notes that belong to them.
+   *
+   * The graph is otherwise a picture of the prose only, which leaves the other
+   * half of Knowledge as three lists you have to take on faith. With this on, a
+   * project is visibly the thing its notes and its artifacts hang off, which is
+   * the fastest way to learn what the word means here.
+   */
+  showRecords: boolean;
+  /**
+   * How hard nodes of the same colour pull towards each other, 0 to 1.
+   *
+   * Colour tells you what a node is; this makes the layout agree with it, so a
+   * folder is a place on the screen and not just a hue scattered through a
+   * hairball. At 0 it is the plain link-and-repel layout.
+   */
+  clusterForce: number;
   textFadeThreshold: number;
   nodeSize: number;
   linkThickness: number;
@@ -866,6 +896,9 @@ export function defaultVaultSettings(): VaultSettings {
       showAttachments: false,
       showUnresolved: true,
       showArrows: false,
+      colorBy: 'folder',
+      showRecords: true,
+      clusterForce: 0.35,
       textFadeThreshold: 1.1,
       nodeSize: 1,
       linkThickness: 1,

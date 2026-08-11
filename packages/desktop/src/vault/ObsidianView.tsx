@@ -19,8 +19,9 @@ import {
   stringifyYaml,
 } from '@ai-coworker/shared';
 
+import { Icon } from '../components/icons.js';
 import CanvasView from './CanvasView.js';
-import GraphView from './GraphView.js';
+import GraphView, { type GraphRecords, type RecordKind } from './GraphView.js';
 import NoteView from './NoteView.js';
 import {
   BacklinksPane,
@@ -64,12 +65,26 @@ interface Leaf {
 export interface ExtraView {
   id: string;
   label: string;
-  icon: string;
+  icon: React.ReactNode;
+  /** One line, in the ribbon's tooltip: what this is, for somebody who has not
+   *  opened it yet. An icon can only ever be a reminder of a name. */
+  hint?: string;
   render(): React.ReactNode;
 }
 
 interface Props {
   extraViews?: ExtraView[];
+  /**
+   * The structured records to draw in the graph beside the notes. Clicking one
+   * opens the extra view whose id matches — `projects`, `artifacts`, `tasks` —
+   * so the graph is a way in rather than a separate picture.
+   */
+  records?: GraphRecords;
+  /**
+   * Go to the to-do list. Tasks are a section of the app rather than a pane in
+   * here, so a task node in the graph leads out of the vault entirely.
+   */
+  onOpenTaskList?: () => void;
 }
 
 let sequence = 0;
@@ -89,7 +104,7 @@ function newTab(patch: Partial<Tab> = {}): Tab {
   };
 }
 
-export default function ObsidianView({ extraViews = [] }: Props) {
+export default function ObsidianView({ extraViews = [], records, onOpenTaskList }: Props) {
   const vault = useVault();
   const ui = useUi();
 
@@ -235,6 +250,18 @@ export default function ObsidianView({ extraViews = [] }: Props) {
       });
     },
     [activeLeaf.id, updateLeaf],
+  );
+
+  /** A record node in the graph goes to the list that record came from. */
+  const openRecordList = useCallback(
+    (kind: RecordKind) => {
+      if (kind === 'task') {
+        onOpenTaskList?.();
+        return;
+      }
+      openSpecial('extra', `${kind}s`);
+    },
+    [onOpenTaskList, openSpecial],
   );
 
   const closeTab = useCallback(
@@ -743,19 +770,54 @@ export default function ObsidianView({ extraViews = [] }: Props) {
     <div className="ob" onClick={() => menu && setMenu(null)}>
       {showRibbon ? (
         <div className="ob-ribbon">
-          <RibbonButton title="New note (⌘N)" onClick={() => void createNote()}>✎</RibbonButton>
-          <RibbonButton title="Search (⌘⇧F)" onClick={() => { setLeftOpen(true); setLeftPane('search'); }}>⌕</RibbonButton>
-          <RibbonButton title="Quick switcher (⌘O)" onClick={() => setModal('switcher')}>⇄</RibbonButton>
-          <RibbonButton title="Graph view (⌘G)" onClick={() => openSpecial('graph')}>◍</RibbonButton>
-          <RibbonButton title="Daily note (⌘⇧D)" onClick={() => void vault.dailyNote().then((p) => openPath(p))}>▤</RibbonButton>
-          <RibbonButton title="Command palette (⌘P)" onClick={() => setModal('palette')}>⌘</RibbonButton>
+          <RibbonButton label="New note" hint="A blank markdown file in your vault" hotkey="⌘N" onClick={() => void createNote()}>
+            <Icon name="note-plus" />
+          </RibbonButton>
+          <RibbonButton
+            label="Search"
+            hint="Find text across every note"
+            hotkey="⌘⇧F"
+            active={leftOpen && leftPane === 'search'}
+            onClick={() => { setLeftOpen(true); setLeftPane('search'); }}
+          >
+            <Icon name="search" />
+          </RibbonButton>
+          <RibbonButton label="Go to note" hint="Jump to a note by name" hotkey="⌘O" onClick={() => setModal('switcher')}>
+            <Icon name="switch" />
+          </RibbonButton>
+          <RibbonButton
+            label="Graph"
+            hint="Your notes as the links between them"
+            hotkey="⌘G"
+            active={activeTab?.kind === 'graph'}
+            onClick={() => openSpecial('graph')}
+          >
+            <Icon name="graph" />
+          </RibbonButton>
+          <RibbonButton label="Today's note" hint="One note per day, created on demand" hotkey="⌘⇧D" onClick={() => void vault.dailyNote().then((p) => openPath(p))}>
+            <Icon name="calendar" />
+          </RibbonButton>
+          <RibbonButton label="Command palette" hint="Everything this workspace can do" hotkey="⌘P" onClick={() => setModal('palette')}>
+            <Icon name="command" />
+          </RibbonButton>
+
+          {extraViews.length ? <div className="ob-ribbon-rule" /> : null}
           {extraViews.map((view) => (
-            <RibbonButton key={view.id} title={view.label} onClick={() => openSpecial('extra', view.id)}>
+            <RibbonButton
+              key={view.id}
+              label={view.label}
+              hint={view.hint}
+              active={activeTab?.kind === 'extra' && activeTab.extraId === view.id}
+              onClick={() => openSpecial('extra', view.id)}
+            >
               {view.icon}
             </RibbonButton>
           ))}
+
           <div className="ob-ribbon-spacer" />
-          <RibbonButton title="Settings (⌘,)" onClick={() => setModal('settings')}>⚙</RibbonButton>
+          <RibbonButton label="Vault settings" hotkey="⌘," onClick={() => setModal('settings')}>
+            <Icon name="settings" />
+          </RibbonButton>
         </div>
       ) : null}
 
@@ -901,7 +963,12 @@ export default function ObsidianView({ extraViews = [] }: Props) {
                 </button>
               </div>
               <div className="tab-actions">
-                {leaf.tabs.find((t) => t.id === leaf.activeId)?.kind === 'note' ? (
+                {/* An empty tab is still a note tab, and it has no reading view
+                    to toggle and nothing to rename — so it gets no controls. */}
+                {(() => {
+                  const tab = leaf.tabs.find((t) => t.id === leaf.activeId);
+                  return tab?.kind === 'note' && tab.path;
+                })() ? (
                   <>
                     <button
                       className="ghost"
@@ -909,7 +976,11 @@ export default function ObsidianView({ extraViews = [] }: Props) {
                       title="Toggle reading view (⌘E)"
                       type="button"
                     >
-                      {leaf.tabs.find((t) => t.id === leaf.activeId)?.mode === 'reading' ? '✎' : '👁'}
+                      {leaf.tabs.find((t) => t.id === leaf.activeId)?.mode === 'reading' ? (
+                        <Icon name="edit" size={15} />
+                      ) : (
+                        <Icon name="eye" size={15} />
+                      )}
                     </button>
                     <button
                       className="ghost"
@@ -935,7 +1006,7 @@ export default function ObsidianView({ extraViews = [] }: Props) {
                         });
                       }}
                     >
-                      ⋯
+                      <Icon name="more" size={15} />
                     </button>
                   </>
                 ) : null}
@@ -958,6 +1029,8 @@ export default function ObsidianView({ extraViews = [] }: Props) {
                         void vault.saveSettings({ graph: { ...vault.settings.graph, ...patch } })
                       }
                       onOpen={(path, newTab_) => openPath(path, { newTab: newTab_ })}
+                      records={records}
+                      onOpenRecord={openRecordList}
                     />
                   );
                 }
@@ -966,12 +1039,22 @@ export default function ObsidianView({ extraViews = [] }: Props) {
                   return <div className="extra-view">{view?.render() ?? null}</div>;
                 }
                 if (!tab.path) {
+                  const recent = vault.markdownFiles
+                    .slice()
+                    .sort((a, b) => b.mtime - a.mtime)
+                    .slice(0, 6);
                   return (
                     <div className="leaf-empty">
-                      <div className="leaf-empty-title">No note open</div>
+                      <div className="leaf-empty-title">
+                        {vault.markdownFiles.length} notes in this vault
+                      </div>
+                      <p className="leaf-empty-sub">
+                        Write in markdown, link with <code>[[double brackets]]</code>, and the graph
+                        draws itself from the links.
+                      </p>
                       <div className="leaf-empty-actions">
-                        <button onClick={() => void createNote()} type="button">
-                          Create new note
+                        <button className="primary" onClick={() => void createNote()} type="button">
+                          New note
                         </button>
                         <button onClick={() => setModal('switcher')} type="button">
                           Go to note
@@ -980,17 +1063,19 @@ export default function ObsidianView({ extraViews = [] }: Props) {
                           Open graph
                         </button>
                       </div>
-                      <div className="leaf-empty-recent">
-                        {vault.markdownFiles
-                          .slice()
-                          .sort((a, b) => b.mtime - a.mtime)
-                          .slice(0, 6)
-                          .map((file) => (
+                      {recent.length ? (
+                        <div className="leaf-empty-recent">
+                          <div className="leaf-empty-recent-head">Recently edited</div>
+                          {recent.map((file) => (
                             <button key={file.path} onClick={() => openPath(file.path)} type="button">
-                              {titleOf(file.path)}
+                              <span className="leaf-recent-title">{titleOf(file.path)}</span>
+                              {file.folder ? (
+                                <span className="leaf-recent-where">{file.folder}</span>
+                              ) : null}
                             </button>
                           ))}
-                      </div>
+                        </div>
+                      ) : null}
                     </div>
                   );
                 }
@@ -1109,6 +1194,8 @@ export default function ObsidianView({ extraViews = [] }: Props) {
                       void vault.saveSettings({ graph: { ...vault.settings.graph, ...patch } })
                     }
                     onOpen={(path, newTab_) => openPath(path, { newTab: newTab_ })}
+                    records={records}
+                    onOpenRecord={openRecordList}
                     focus={activePath}
                     depth={2}
                     compact
@@ -1250,18 +1337,46 @@ function tabTitle(
   return isMarkdown(tab.path) ? titleOf(tab.path) : tab.path.split('/').pop()!;
 }
 
+/**
+ * One icon in the ribbon, with its name attached.
+ *
+ * The name is not a `title` attribute. A native tooltip arrives a second and a
+ * half after the pointer stops, which is long after somebody has given up
+ * guessing what "◈" meant — so the label is drawn beside the button the moment
+ * it is hovered, along with the shortcut and, where one helps, a line saying
+ * what the thing actually is.
+ */
 function RibbonButton({
-  title,
+  label,
+  hint,
+  hotkey,
+  active,
   onClick,
   children,
 }: {
-  title: string;
+  label: string;
+  hint?: string;
+  hotkey?: string;
+  active?: boolean;
   onClick(): void;
   children: React.ReactNode;
 }) {
   return (
-    <button className="ribbon-button" title={title} onClick={onClick} type="button">
+    <button
+      className={`ribbon-button${active ? ' is-active' : ''}`}
+      onClick={onClick}
+      type="button"
+      aria-label={label}
+      aria-pressed={active}
+    >
       {children}
+      <span className="ribbon-tip">
+        <span className="ribbon-tip-name">
+          {label}
+          {hint ? <span className="ribbon-tip-hint">{hint}</span> : null}
+        </span>
+        {hotkey ? <span className="ribbon-tip-key">{hotkey}</span> : null}
+      </span>
     </button>
   );
 }
