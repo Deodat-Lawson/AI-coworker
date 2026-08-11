@@ -80,6 +80,11 @@ interface Props {
    * so the graph is a way in rather than a separate picture.
    */
   records?: GraphRecords;
+  /**
+   * Go to the to-do list. Tasks are a section of the app rather than a pane in
+   * here, so a task node in the graph leads out of the vault entirely.
+   */
+  onOpenTaskList?: () => void;
 }
 
 let sequence = 0;
@@ -99,7 +104,7 @@ function newTab(patch: Partial<Tab> = {}): Tab {
   };
 }
 
-export default function ObsidianView({ extraViews = [], records }: Props) {
+export default function ObsidianView({ extraViews = [], records, onOpenTaskList }: Props) {
   const vault = useVault();
   const ui = useUi();
 
@@ -249,8 +254,14 @@ export default function ObsidianView({ extraViews = [], records }: Props) {
 
   /** A record node in the graph goes to the list that record came from. */
   const openRecordList = useCallback(
-    (kind: RecordKind) => openSpecial('extra', `${kind}s`),
-    [openSpecial],
+    (kind: RecordKind) => {
+      if (kind === 'task') {
+        onOpenTaskList?.();
+        return;
+      }
+      openSpecial('extra', `${kind}s`);
+    },
+    [onOpenTaskList, openSpecial],
   );
 
   const closeTab = useCallback(

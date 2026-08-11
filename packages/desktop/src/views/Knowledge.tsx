@@ -4,13 +4,19 @@ import type { Artifact, Project, Task } from '@ai-coworker/shared';
 
 import { Icon } from '../components/icons.js';
 import { api, unwrap, type AppState } from '../lib/api.js';
-import { relative } from '../lib/format.js';
 import ObsidianView, { type ExtraView } from '../vault/ObsidianView.js';
 import { UiProvider } from '../vault/ui.js';
 import Sources from './Sources.js';
 
 interface Props {
   state: AppState;
+  /**
+   * Go to the to-do list, which is a section of its own. The graph draws tasks
+   * beside the notes and the projects they belong to, so clicking one has to
+   * land somewhere — and the somewhere is the real list, not a second copy of
+   * it in here.
+   */
+  onOpenTasks?: () => void;
 }
 
 /**
@@ -23,12 +29,17 @@ interface Props {
  * and the sharing rules that decide who ever hears it — so it lives beside the
  * notes rather than off in a tab of its own.
  *
- * Each of the four carries its own one-line definition, and the ribbon shows it
- * on hover. Three of these words — project, artifact, task — mean something
- * specific here and something vaguer everywhere else, so the view says which
- * before it shows a single record.
+ * Tasks are not one of these panes. They are their own section of the app now,
+ * with a real to-do list in it, and a second poorer list in here would be the
+ * confusion this view is meant to remove rather than a convenience. The graph
+ * still draws them — a task is worth seeing next to the project it belongs to —
+ * and clicking one goes to that list.
+ *
+ * Each pane carries its own one-line definition, and the ribbon shows it on
+ * hover. "Project" and "artifact" mean something specific here and something
+ * vaguer everywhere else, so the view says which before it shows a record.
  */
-export default function Knowledge({ state }: Props) {
+export default function Knowledge({ state, onOpenTasks }: Props) {
   const extras = useMemo<ExtraView[]>(
     () => [
       {
@@ -44,13 +55,6 @@ export default function Knowledge({ state }: Props) {
         hint: 'Work your agent can show, not just describe',
         icon: <Icon name="box" />,
         render: () => <ArtifactsView state={state} />,
-      },
-      {
-        id: 'tasks',
-        label: 'Tasks',
-        hint: 'What you owe, including anything a meeting assigned you',
-        icon: <Icon name="checklist" />,
-        render: () => <TasksView state={state} />,
       },
       {
         id: 'sources',
@@ -77,7 +81,7 @@ export default function Knowledge({ state }: Props) {
 
   return (
     <UiProvider>
-      <ObsidianView extraViews={extras} records={records} />
+      <ObsidianView extraViews={extras} records={records} onOpenTaskList={onOpenTasks} />
     </UiProvider>
   );
 }
@@ -561,172 +565,4 @@ function hostOf(url: string): string {
   } catch {
     return url;
   }
-}
-
-// ---------------------------------------------------------------------------
-// Tasks
-// ---------------------------------------------------------------------------
-
-/**
- * Every status gets a group, including the two nobody looks at. A status with
- * nowhere to appear is a task that has vanished, and "dropped" is exactly the
- * kind of value that gets left out of a list like this and then loses records.
- * Empty groups draw nothing, so the cost of being complete here is zero.
- */
-const TASK_GROUPS = [
-  { key: 'in_progress', label: 'In progress' },
-  { key: 'todo', label: 'To do' },
-  { key: 'blocked', label: 'Blocked' },
-  { key: 'done', label: 'Done' },
-  { key: 'dropped', label: 'Dropped' },
-] as const;
-
-const TASK_STATUSES = ['todo', 'in_progress', 'blocked', 'done', 'dropped'] as const;
-
-function TasksView({ state }: { state: AppState }) {
-  const [run, error] = useRunner();
-  const [title, setTitle] = useState('');
-
-  const add = async () => {
-    if (!title.trim()) return;
-    await run(unwrap(api.saveTask({ title: title.trim() })));
-    setTitle('');
-  };
-
-  const save = (task: Task, patch: Partial<Task>) =>
-    void run(unwrap(api.saveTask({ id: task.id, title: task.title, ...patch })));
-
-  return (
-    <div className="rec">
-      <RecordHeader
-        icon={<Icon name="checklist" size={20} />}
-        title="Tasks"
-        definition="A task is work you owe somebody. Most of these you will not have typed: when your agent takes something on in a meeting, it lands here, so the commitment and the record of it are the same thing."
-        count={state.tasks.filter((t) => t.status !== 'done').length}
-        countNoun="open task"
-        dir={state.knowledgeDir}
-      />
-
-      {error ? <div className="error-text">{error}</div> : null}
-
-      <div className="task-add">
-        <input
-          placeholder="Add a task…"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') void add();
-          }}
-        />
-        <button className="primary" disabled={!title.trim()} onClick={() => void add()}>
-          Add
-        </button>
-      </div>
-
-      {state.tasks.length === 0 ? (
-        <EmptyState
-          icon={<Icon name="checklist" size={26} />}
-          title="Nothing owed"
-          body="Anything your agent agrees to on your behalf shows up here with the meeting it came from, so you can find out what you promised without reading a transcript."
-        />
-      ) : (
-        TASK_GROUPS.map(({ key, label }) => {
-          const tasks = state.tasks.filter((t) => t.status === key);
-          if (!tasks.length) return null;
-          return (
-            <section className="task-group" key={key}>
-              <h2 className="task-group-title">
-                {label}
-                <span className="task-group-count">{tasks.length}</span>
-              </h2>
-              {tasks.map((task) => (
-                <TaskRow
-                  key={task.id}
-                  task={task}
-                  project={state.projects.find((p) => p.id === task.projectId)}
-                  onStatus={(status) => save(task, { status })}
-                  onDelete={() => void run(unwrap(api.deleteTask(task.id)))}
-                />
-              ))}
-            </section>
-          );
-        })
-      )}
-    </div>
-  );
-}
-
-function TaskRow({
-  task,
-  project,
-  onStatus,
-  onDelete,
-}: {
-  task: Task;
-  project?: Project;
-  onStatus(status: Task['status']): void;
-  onDelete(): void;
-}) {
-  const done = task.status === 'done';
-  const overdue = !done && task.dueDate !== undefined && task.dueDate < Date.now();
-
-  return (
-    <article className={`task-row${done ? ' is-done' : ''}`}>
-      {/* The one action worth a click of its own. Everything else is a menu. */}
-      <button
-        className={`task-check${done ? ' is-done' : ''}`}
-        onClick={() => onStatus(done ? 'todo' : 'done')}
-        title={done ? 'Mark as not done' : 'Mark as done'}
-        aria-pressed={done}
-      >
-        {done ? <Icon name="check" size={13} /> : null}
-      </button>
-
-      <div className="task-main">
-        <div className="task-title">{task.title}</div>
-        {task.detail ? <p className="task-detail">{task.detail}</p> : null}
-        {task.acceptanceCriteria.length ? (
-          <ul className="task-criteria">
-            {task.acceptanceCriteria.map((criterion, index) => (
-              <li key={index}>{criterion}</li>
-            ))}
-          </ul>
-        ) : null}
-        {/* Why you are looking at a task you never typed. */}
-        {task.negotiationNote ? (
-          <p className="task-note">Your agent pushed back: {task.negotiationNote}</p>
-        ) : null}
-        <div className="task-meta">
-          {project ? <span className="rec-chip">{project.name}</span> : null}
-          {task.sourceMeetingId ? <span className="rec-chip is-quiet">from a meeting</span> : null}
-          {task.priority === 'high' || task.priority === 'urgent' ? (
-            <span className="task-priority">{task.priority}</span>
-          ) : null}
-          {task.dueDate ? (
-            <span className={overdue ? 'task-due is-overdue' : 'task-due'}>
-              {overdue ? 'overdue — was due' : 'due'} {relative(task.dueDate)}
-            </span>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="task-side">
-        <select
-          className="task-status"
-          value={task.status}
-          onChange={(event) => onStatus(event.target.value as Task['status'])}
-          aria-label="Status"
-        >
-          {TASK_STATUSES.map((status) => (
-            <option key={status} value={status}>
-              {status.replace('_', ' ')}
-            </option>
-          ))}
-        </select>
-        <button className="ghost is-danger" onClick={onDelete} title="Delete this task">
-          <Icon name="trash" size={14} />
-        </button>
-      </div>
-    </article>
-  );
 }

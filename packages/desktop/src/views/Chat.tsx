@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { isDirect } from '@ai-coworker/shared';
+import { isDirect, truncate } from '@ai-coworker/shared';
 
 import Composer from '../components/Composer.js';
 import MessageList, { type MeetingLens, type MessageListActions } from '../components/MessageList.js';
@@ -135,6 +135,28 @@ export default function Chat({
     onDelete: (messageId) => void guard(() => unwrap(api.deleteMessage(workspace.workspace.id, messageId))),
     onPin: (messageId, pinned) =>
       void guard(() => unwrap(api.pinMessage(workspace.workspace.id, messageId, pinned))),
+    // What somebody asked for in a channel is the commonest source of a task
+    // there is, and retyping it is how it gets lost. The task keeps a way back
+    // to the message, so "why am I doing this" always has an answer.
+    onAddToTasks: (message) => {
+      const author = workspace.members.find((m) => m.address === message.author);
+      void guard(() =>
+        unwrap(
+          api.saveTask({
+            title: truncate(message.text.replace(/\s+/g, ' ').trim(), 140) || 'Follow up',
+            source: {
+              kind: 'message',
+              workspaceId: workspace.workspace.id,
+              channelId: channel.id,
+              messageId: message.id,
+              author: message.author,
+              excerpt: truncate(message.text.replace(/\s+/g, ' ').trim(), 180),
+            },
+            detail: `Said by ${author?.displayName ?? message.author} in #${channel.name}.`,
+          }),
+        ),
+      );
+    },
     onOpenChannel,
     onOpenMember,
     onLoadOlder: () => void api.loadOlder(),

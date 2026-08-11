@@ -52,7 +52,16 @@
    */
   const TEST_TIMEOUT = 45_000;
 
+  /**
+   * Narrow the run to the tests whose names contain this, set by
+   * `npm run test:ui -- --only <text>`. The whole suite is the default; being
+   * able to run one part of it is what makes a failure in a forty-minute suite
+   * debuggable.
+   */
+  const ONLY = String(window.__probeOnly || '').toLowerCase();
+
   async function test(name, fn) {
+    if (ONLY && !name.toLowerCase().includes(ONLY)) return;
     const started = Date.now();
     window.__probe.running = name;
     let timer;
@@ -1722,6 +1731,314 @@
         !ROOT.style.getPropertyValue('--accent'),
         'the vault leaked an inline --accent onto the whole app',
       );
+    });
+
+
+    // -- the to-do list ------------------------------------------------------
+
+    /** Everything the renderer drew, read back through the app's own IPC. */
+    const appState = () => window.api.getState();
+
+    /**
+     * Wait for a task to exist on disk in a particular shape.
+     *
+     * Deliberately not `waitFor`: that one takes a synchronous predicate, and a
+     * promise is always truthy, so an async predicate handed to it resolves the
+     * first poll and never actually waits.
+     */
+    async function waitForTask(title, predicate = () => true, timeout = 8000) {
+      const deadline = Date.now() + timeout;
+      for (;;) {
+        const task = (await appState()).tasks.find((t) => t.title === title);
+        if (task && predicate(task)) return task;
+        if (Date.now() > deadline) {
+          throw new Error(`timed out waiting for the task "${title}" to settle`);
+        }
+        await sleep(80);
+      }
+    }
+
+    async function waitForNoTask(title, timeout = 8000) {
+      const deadline = Date.now() + timeout;
+      for (;;) {
+        if (!(await appState()).tasks.some((t) => t.title === title)) return true;
+        if (Date.now() > deadline) throw new Error(`"${title}" was still there`);
+        await sleep(80);
+      }
+    }
+
+    async function openTasks() {
+      const nav = byText('.side-row', 'Tasks');
+      assert(nav, 'there is no Tasks row in the sidebar');
+      if (!nav.classList.contains('active')) nav.click();
+      await waitFor(() => q('.todo'), 'the to-do list');
+      await sleep(240);
+    }
+
+    async function railTo(label) {
+      // Match the label span, not the whole row — the row also holds an icon
+      // glyph and a count, so `textContent` never starts with the name.
+      const row = qa('.todo-rail-row').find((el) => q('.todo-rail-label', el)?.textContent.trim() === label);
+      assert(row, `no rail row called "${label}"`);
+      row.click();
+      await sleep(240);
+    }
+
+    /** Type a line into the add box and press Enter, the way a person does. */
+    async function addTask(text) {
+      const input = await waitFor(() => q('.quick-add-field input'), 'the add box');
+      log(`adding "${text}" while looking at "${q('.todo-head h1')?.textContent?.trim()}"`);
+      input.focus();
+      // Empty it first and wait for the box to actually hold what was typed:
+      // pressing Enter against a half-applied controlled value is the one way
+      // this helper can silently add the wrong thing.
+      setNativeValue(input, '');
+      await sleep(90);
+      setNativeValue(input, text);
+      await waitFor(() => input.value === text, `the add box to hold "${text}"`);
+      await sleep(120);
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await sleep(450);
+    }
+
+    const rowFor = (title) => qa('.task-row').find((el) => el.textContent.includes(title));
+
+    /**
+     * Click a row open and wait until it really is the selected one. Clicking a
+     * node captured a moment earlier races React replacing it, which is how this
+     * test intermittently pressed keys at whatever row happened to be first.
+     */
+    async function openRow(title) {
+      await waitFor(() => rowFor(title), `the row for ${title}`);
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const row = rowFor(title);
+        if (row?.classList.contains('open')) return row;
+        q('.task-body', row)?.click();
+        await sleep(120);
+      }
+      throw new Error(`could not open the row for ${title}`);
+    }
+
+    /** A bare keystroke on the list, with nothing focused that would eat it. */
+    async function press(key) {
+      document.activeElement?.blur?.();
+      await sleep(50);
+      window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+      await sleep(300);
+    }
+
+    await test('the to-do list reads a plain-language line in the quick add box', async () => {
+      await openTasks();
+      await railTo('Today');
+      await addTask('Probe rehearsal #ProbeList @probe tomorrow at 3pm p1');
+
+      const task = await waitForTask('Probe rehearsal');
+      eq(task.priority, 'urgent', 'p1 should mean urgent');
+      eq(task.dueHasTime, true, 'a time was given');
+      eq(new Date(task.dueDate).getHours(), 15, '3pm');
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      eq(new Date(task.dueDate).getDate(), tomorrow.getDate(), 'due tomorrow');
+      assert(task.labels.includes('probe'), 'the label was not kept');
+
+      const list = (await appState()).taskLists.find((l) => l.id === task.listId);
+      assert(list, 'the list named with # was not created');
+      eq(list.name, 'ProbeList');
+    });
+
+    await test('the to-do list puts something typed in Today into Today', async () => {
+      await openTasks();
+      await railTo('Today');
+      // No word here that the date parser would claim — "today" in the title
+      // would be lifted out of it, which is the parser working, not a bug.
+      await addTask('Probe alpha errand');
+      const task = await waitForTask('Probe alpha errand');
+      assert(task.dueDate, 'a task added to Today should be due today');
+      eq(new Date(task.dueDate).getDate(), new Date().getDate(), 'due today');
+      await waitFor(() => rowFor('Probe alpha errand'), 'its row in Today');
+    });
+
+    await test('the to-do list records a tick, and undo puts it back', async () => {
+      await openTasks();
+      await railTo('Today');
+      const row = await waitFor(() => rowFor('Probe alpha errand'), 'the row');
+      q('.task-check', row).click();
+
+      const done = await waitForTask('Probe alpha errand', (t) => t.status === 'done');
+      assert(done.completedAt > 0, 'a completed task should carry when');
+
+      const undo = await waitFor(
+        () => qa('.todo-undo button').find((b) => b.textContent.includes('Undo')),
+        'the undo toast',
+      );
+      undo.click();
+      const back = await waitForTask('Probe alpha errand', (t) => t.status === 'todo');
+      eq(back.completedAt, undefined, 'a reopened task is not still completed');
+    });
+
+    await test('the to-do list moves a repeating task on rather than finishing it', async () => {
+      await openTasks();
+      await railTo('Today');
+      await addTask('Probe watering today every 3 days');
+      const task = await waitForTask('Probe watering');
+      assert(task.recurrence, 'the repeat was not read');
+      eq(task.recurrence.unit, 'day');
+      eq(task.recurrence.every, 3);
+      const firstDue = task.dueDate;
+
+      const row = await waitFor(() => rowFor('Probe watering'), 'its row');
+      q('.task-check', row).click();
+
+      const after = await waitForTask('Probe watering', (t) => t.dueDate !== firstDue);
+      eq(after.status, 'todo', 'a repeating task should not finish');
+      eq(Math.round((after.dueDate - firstDue) / 86400000), 3, 'three days on');
+    });
+
+    await test('the to-do list takes priority and dates from the keyboard', async () => {
+      await openTasks();
+      await railTo('All tasks');
+      await openRow('Probe rehearsal');
+
+      await press('3');
+      await waitForTask('Probe rehearsal', (t) => t.priority === 'normal');
+
+      await press('r');
+      const cleared = await waitForTask('Probe rehearsal', (t) => t.dueDate === undefined);
+      eq(cleared.dueDate, undefined, 'r should clear the due date');
+
+      await press('t');
+      const today = await waitForTask('Probe rehearsal', (t) => t.dueDate !== undefined);
+      eq(new Date(today.dueDate).getDate(), new Date().getDate(), 't should mean today');
+    });
+
+    await test('the to-do list keeps tasks when their list is deleted', async () => {
+      await openTasks();
+      const before = await appState();
+      const list = before.taskLists.find((l) => l.name === 'ProbeList');
+      assert(list, 'the probe list should exist by now');
+      const held = before.tasks.filter((t) => t.listId === list.id).map((t) => t.id);
+      assert(held.length > 0, 'the list should hold something');
+
+      await unwrap(window.api.deleteTaskList(list.id, false));
+      await sleep(500);
+
+      const after = await appState();
+      assert(!after.taskLists.some((l) => l.id === list.id), 'the list should be gone');
+      for (const id of held) {
+        const task = after.tasks.find((t) => t.id === id);
+        assert(task, 'a task was lost with its list');
+        eq(task.listId, undefined, 'it should have fallen back to the Inbox');
+      }
+    });
+
+    await test('the to-do list makes a delete undoable', async () => {
+      await openTasks();
+      await railTo('All tasks');
+      await openRow('Probe alpha errand');
+
+      await press('Backspace');
+      await waitForNoTask('Probe alpha errand');
+
+      const undo = await waitFor(
+        () => qa('.todo-undo button').find((b) => b.textContent.includes('Undo')),
+        'the undo toast',
+      );
+      undo.click();
+      const restored = await waitForTask('Probe alpha errand');
+      assert(restored, 'undo did not bring the task back');
+    });
+
+    await test('bulkundo repro: undo after a bulk complete', async () => {
+      await openTasks();
+      await railTo('Today');
+      const titles = ['Zeta one', 'Zeta two', 'Zeta three'];
+      for (const t of titles) await addTask(t);
+      for (const t of titles) await waitForTask(t);
+
+      // Meta-click each row body to build a three-task selection.
+      for (const t of titles) {
+        const row = await waitFor(() => rowFor(t), `the row for ${t}`);
+        q('.task-body', row).dispatchEvent(
+          new MouseEvent('click', { bubbles: true, metaKey: true }),
+        );
+        await sleep(200);
+      }
+      const bulk = await waitFor(() => q('.todo-bulk'), 'the bulk bar');
+      log(`bulk bar says: ${q('.todo-bulk-count', bulk).textContent}`);
+
+      const complete = qa('.todo-bulk button').find((b) => b.textContent.trim() === 'Complete');
+      assert(complete, 'no Complete button in the bulk bar');
+      complete.click();
+
+      for (const t of titles) await waitForTask(t, (task) => task.status === 'done');
+      log('all three are completed on disk');
+
+      const toast = await waitFor(() => q('.todo-undo'), 'the undo toast');
+      log(`undo toast label: "${q('span', toast).textContent}"`);
+      const undoBtn = qa('.todo-undo button').find((b) => b.textContent.includes('Undo'));
+      undoBtn.click();
+      await sleep(1200);
+
+      const state = await appState();
+      const back = titles.filter(
+        (t) => state.tasks.find((task) => task.title === t)?.status === 'todo',
+      );
+      log(`reopened by undo: ${JSON.stringify(back)}`);
+      eq(back.length, 3, 'undo should reopen every task the bulk complete ticked');
+    });
+
+    await test('the to-do list survives a reload with everything intact', async () => {
+      // The knowledge base is the source of truth, not the window: what the
+      // renderer is showing has to be what a fresh read of db.json says.
+      const before = (await appState()).tasks.find((t) => t.title === 'Probe watering');
+      assert(before, 'the repeating task should still be here');
+      eq(before.recurrence.every, 3, 'the repeat survived being written and read');
+      assert(Number.isFinite(before.order), 'every task carries a position');
+      assert(Array.isArray(before.labels) && Array.isArray(before.subtasks), 'and its collections');
+    });
+
+    await test('the to-do list closes one thing at a time with Escape', async () => {
+      // A popover handles its own Escape. Without a guard the same keypress
+      // also reached the view and shut the panel behind it, so dismissing a
+      // date picker threw away the task you were editing.
+      await openTasks();
+      await railTo('All tasks');
+      await openRow('Probe rehearsal');
+      await waitFor(() => q('.task-detail'), 'the detail panel');
+
+      for (const label of ['Priority', 'Repeat', 'Due']) {
+        const prop = qa('.task-prop').find(
+          (el) => q('.task-prop-label', el)?.textContent.trim() === label,
+        );
+        assert(prop, `no property row called ${label}`);
+        q('.prop-button', prop).click();
+        await waitFor(() => q('.popover'), `the ${label} popover`);
+
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        await sleep(280);
+        assert(!q('.popover'), `the ${label} popover stayed open`);
+        assert(q('.task-detail'), `Escape on the ${label} menu also closed the task`);
+      }
+    });
+
+    await test('the to-do list badge follows what is actually due', async () => {
+      await openTasks();
+      const state = await appState();
+      const today = state.tasks.filter(
+        (t) =>
+          t.status !== 'done' &&
+          t.status !== 'dropped' &&
+          t.dueDate !== undefined &&
+          new Date(t.dueDate).setHours(0, 0, 0, 0) <= new Date().setHours(0, 0, 0, 0),
+      ).length;
+      const nav = byText('.side-row', 'Tasks');
+      const badge = nav && q('.side-badge', nav);
+      if (today === 0) {
+        log('nothing due today, so no badge to check');
+        return;
+      }
+      assert(badge, 'a task due today should put a count in the sidebar');
+      eq(Number(badge.textContent.replace(/\D/g, '')), today, 'the badge disagrees with the data');
     });
 
     return {

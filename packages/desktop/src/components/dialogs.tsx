@@ -715,6 +715,7 @@ export const SHORTCUTS: { keys: string; what: string }[] = [
   { keys: '⌘⇧A', what: 'Activity' },
   { keys: '⌘⇧T', what: 'Threads' },
   { keys: '⌘⇧D', what: 'Your agent' },
+  { keys: '⌘⇧K', what: 'Tasks' },
   { keys: '⌘,', what: 'Settings' },
   { keys: '⌘N', what: 'New message' },
   { keys: '⌘⇧L', what: 'Dark → light → match system' },
@@ -725,11 +726,35 @@ export const SHORTCUTS: { keys: string; what: string }[] = [
   { keys: '⌘/', what: 'This list' },
 ];
 
+/** The second half of the list: keys that only mean something in Tasks. */
+export const TASK_SHORTCUTS: { keys: string; what: string }[] = [
+  { keys: 'A', what: 'Add a task' },
+  { keys: '↑ / ↓', what: 'Move down the list' },
+  { keys: 'Enter', what: 'Open the task' },
+  { keys: 'C', what: 'Complete or reopen' },
+  { keys: 'X', what: 'Select, for acting on several at once' },
+  { keys: '1 … 4', what: 'Set priority' },
+  { keys: 'T / M / W', what: 'Due today, tomorrow, next week' },
+  { keys: 'R', what: 'Remove the due date' },
+  { keys: '⌫', what: 'Delete' },
+  { keys: '⌘Z', what: 'Undo the last change' },
+  { keys: '/', what: 'Filter this view' },
+];
+
 export function ShortcutsDialog({ onClose }: { onClose: () => void }) {
   return (
     <Modal title="Keyboard shortcuts" onClose={onClose}>
       <div className="shortcut-list">
         {SHORTCUTS.map((row) => (
+          <div className="shortcut" key={row.keys}>
+            <kbd>{row.keys}</kbd>
+            <span>{row.what}</span>
+          </div>
+        ))}
+      </div>
+      <h2>In Tasks</h2>
+      <div className="shortcut-list">
+        {TASK_SHORTCUTS.map((row) => (
           <div className="shortcut" key={row.keys}>
             <kbd>{row.keys}</kbd>
             <span>{row.what}</span>

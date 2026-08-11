@@ -16,6 +16,8 @@ export interface MessageListActions {
   onEdit: (messageId: string, text: string) => void;
   onDelete: (messageId: string) => void;
   onPin: (messageId: string, pinned: boolean) => void;
+  /** Turn something somebody said into a task on your own to-do list. */
+  onAddToTasks?: (message: Message) => void;
   onOpenChannel?: (channelId: string) => void;
   onOpenMember?: (address: string) => void;
   onLoadOlder?: () => void;
@@ -402,6 +404,16 @@ function MessageRow({
                     setMenu(false);
                   }}
                 />
+                {actions.onAddToTasks ? (
+                  <MenuRow
+                    icon="check"
+                    label="Add to my tasks"
+                    onClick={() => {
+                      actions.onAddToTasks?.(message);
+                      setMenu(false);
+                    }}
+                  />
+                ) : null}
                 <MenuRow
                   icon="copy"
                   label="Copy text"

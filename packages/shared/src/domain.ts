@@ -117,6 +117,61 @@ export type TaskStatus = 'todo' | 'in_progress' | 'blocked' | 'done' | 'dropped'
 
 export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent';
 
+/** One line of a task's checklist. */
+export interface Subtask {
+  id: string;
+  title: string;
+  done: boolean;
+}
+
+export type RecurrenceUnit = 'day' | 'week' | 'month' | 'year';
+
+/**
+ * A repeating task. Ticking one off does not finish it — it moves to its next
+ * date and stays open, which is the whole reason a to-do list has this.
+ */
+export interface Recurrence {
+  unit: RecurrenceUnit;
+  /** Every N units: 2 weeks, 3 months. */
+  every: number;
+  /** Weekly repeats pinned to particular days. 0 = Sunday. */
+  weekdays?: number[];
+  /**
+   * `schedule` keeps the original rhythm — rent is due on the 1st whether or not
+   * you paid March's late. `completion` counts from the day you actually ticked
+   * it: water the plants every three days means three days after the last
+   * watering.
+   */
+  from: 'schedule' | 'completion';
+  /**
+   * The day of the month a monthly or yearly repeat is pinned to. Without it a
+   * bill due on the 31st becomes due on the 28th the first time it passes
+   * February, and stays there — the clamp has to be remembered as a clamp
+   * rather than becoming the new truth.
+   */
+  anchorDay?: number;
+  /** Stop after this date, or after this many occurrences. */
+  until?: number;
+  count?: number;
+  /** How many times it has been completed, for `count`. */
+  completions?: number;
+}
+
+/**
+ * Where a task came from when it was not typed by hand. This is the thing a
+ * general to-do app cannot have: work that arrived because two agents met, or
+ * because somebody said it in a channel, keeps a way back to the moment.
+ */
+export interface TaskSource {
+  kind: 'meeting' | 'message' | 'agent';
+  workspaceId?: string;
+  channelId?: string;
+  messageId?: string;
+  author?: AgentAddress;
+  /** Enough of the original to recognise it without opening anything. */
+  excerpt?: string;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -134,6 +189,48 @@ export interface Task {
   negotiationNote?: string;
   createdAt: number;
   updatedAt: number;
+
+  // --- the to-do list ---
+  /** The list this lives in. Empty means the Inbox. */
+  listId?: string;
+  /** The heading inside that list, when the list has been divided up. */
+  sectionId?: string;
+  labels: string[];
+  /**
+   * True when `dueDate` names a moment; false when it is just a day. "Friday"
+   * and "Friday at 3" are different promises and have to be stored differently.
+   */
+  dueHasTime?: boolean;
+  /** When to raise a notification. Independent of the due date on purpose. */
+  remindAt?: number;
+  recurrence?: Recurrence;
+  subtasks: Subtask[];
+  /** Manual position within its group. Lower sorts first. */
+  order: number;
+  completedAt?: number;
+  source?: TaskSource;
+}
+
+/** A list of tasks: Todoist calls it a project, Things calls it an area. */
+export interface TaskList {
+  id: string;
+  name: string;
+  emoji: string;
+  /** A key from `LIST_COLORS`, not a literal — the theme owns the actual hue. */
+  color: string;
+  order: number;
+  archived: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** A heading inside a list. Tasks with no section sit above the first one. */
+export interface TaskSection {
+  id: string;
+  listId: string;
+  name: string;
+  order: number;
+  collapsed?: boolean;
 }
 
 export type CalendarBlockKind = 'busy' | 'meeting' | 'focus' | 'ooo';
