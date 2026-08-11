@@ -10,4 +10,5 @@ release/
 demo-data/
 .relay-state.json
 .relay-workspaces.json
+.relay-accounts.json
 *.log
