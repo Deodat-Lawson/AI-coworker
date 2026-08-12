@@ -38,7 +38,14 @@ const run = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(here, '..');
 
-const APP_NAME = 'Stead';
+/**
+ * Not plain "Stead". This bundle sits in node_modules, and Spotlight, Launchpad
+ * and the app switcher index it like any other app — so naming it exactly what
+ * the installed app is called produces two identical "Stead" entries and no way
+ * to tell which one you are about to launch. The suffix keeps the Dock honest
+ * during development without competing with the real thing.
+ */
+const APP_NAME = 'Stead (dev)';
 const LSREGISTER =
   '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister';
 
@@ -87,9 +94,15 @@ function locate() {
 }
 
 /**
- * Rename Electron.app to Stead.app, executable included, and repoint path.txt.
- * A leftover Stead.app from an earlier run is discarded rather than merged:
- * it is derived from the one npm just installed, never a source of truth.
+ * Rename Electron.app to `${APP_NAME}.app`, executable included, and repoint
+ * path.txt. A leftover bundle *of the current name* is discarded rather than
+ * merged: it is derived from the one npm just installed, never a source of
+ * truth.
+ *
+ * A bundle left under a previous APP_NAME is not cleaned up — this only ever
+ * looks for Electron.app — so changing APP_NAME strands the old one in
+ * node_modules, where Spotlight goes on indexing it. `npm install electron`
+ * fixes that by restoring Electron.app for the next run to rename.
  */
 async function renameBundle(distDir, pathFile) {
   const from = path.join(distDir, 'Electron.app');
