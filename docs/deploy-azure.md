@@ -25,7 +25,7 @@ Everyone still installs the desktop app locally and points it at the URL.
 
 | Variable | Default | What to set in production |
 |---|---|---|
-| `PORT` | `8787` | Leave it; the container listens on 8787 and ingress maps 443 → 8787. `AI_COWORKER_PORT` is an alias. |
+| `PORT` | `8787` | Leave it. App Service sets this itself (8080) and terminates TLS in front; Container Apps maps 443 → 8787. `AI_COWORKER_PORT` is an alias. |
 | `HOST` | `0.0.0.0` | Leave it. |
 | `AI_COWORKER_REQUIRE_AUTH` | unset → **`optional`** | **Set to `1`.** Unset, a socket that presents no token is admitted under whatever address it claims — fine on your laptop, an open door on a public URL. |
 | `AI_COWORKER_RELAY_NAME` | `Stead` | Your team's name. Appears in confirmation emails and as the relay's own identity. |
@@ -34,6 +34,8 @@ Everyone still installs the desktop app locally and points it at the URL.
 | `AI_COWORKER_WORKSPACE_STATE` | `./.relay-workspaces.json` | Path on the mounted volume. Workspaces, channels, membership, messages. |
 | `AI_COWORKER_RELAY_STATE` | `./.relay-state.json` | Path on the mounted volume. Booked meetings, so a restart doesn't drop the calendar. |
 | `AI_COWORKER_TURN_TIMEOUT_MS` | `240000` | Only if agents are timing out mid-meeting on a slow model. |
+| `ACS_CONNECTION_STRING` | unset | Azure Communication Services, `endpoint=…;accesskey=…`. **Set both this and the sender, or codes come back in the HTTP response.** |
+| `ACS_SENDER_ADDRESS` | unset | The verified sender, e.g. `DoNotReply@<guid>.azurecomm.net`. |
 
 The relay needs **no model credentials**. If you find yourself putting
 `META_API_KEY` on the server, something has gone wrong.
@@ -49,7 +51,7 @@ Read from `.env` next to the app, or the real environment.
 | `META_API_BASE` | `https://api.meta.ai/v1` | Only for a proxy or a private gateway. |
 | `META_MIN_INTERVAL_MS` | `0` | Minimum gap between model calls. Raise it on a rate-limited key or meetings will hit limits. |
 | `AI_COWORKER_OFFLINE` | unset | `1` forces the offline brain, ignoring any key. |
-| `AI_COWORKER_RELAY` | `ws://localhost:8787` | Default relay for the CLI agent. In the desktop app this is a field on the sign-in screen — `wss://<your-app>.azurecontainerapps.io`. |
+| `AI_COWORKER_RELAY` | `ws://localhost:8787` | Default relay for the CLI agent. In the desktop app this is a field on the sign-in screen — `wss://<your-app>.azurewebsites.net`. |
 
 ---
 
@@ -98,28 +100,52 @@ Put `wss://<fqdn>` in the relay field on the desktop app's sign-in screen.
 
 ---
 
-## Two things to know before you call it production
+## Mail, and why it decides whether the relay is safe to expose
 
-**1. There is no mail server, and the confirmation code comes back in the HTTP
-response.** `packages/server/src/main.ts` wires up `LogMailer`, which prints the
-code to the log instead of sending it — and because the mailer is that one,
-`POST /auth/start` includes the code in its own reply (`devCode`), so the app can
-fill it in for you during a local demo. On a public URL that means anyone who can
-reach the relay can request a code for any address and read it straight back.
-`AI_COWORKER_REQUIRE_AUTH=1` does not close this; it is the sign-up path itself.
+With no transport configured the relay falls back to `LogMailer`, which prints
+the confirmation code instead of sending it — and because the mailer is that
+one, `POST /auth/start` also returns the code in its own reply (`devCode`) so
+the app can fill it in during a local demo. On a public URL that is an open
+door: anyone who can reach the relay asks for a code for any address and reads
+it straight back. `AI_COWORKER_REQUIRE_AUTH=1` does not close it, because it is
+the sign-up path itself.
 
-Closing it means implementing the `Mailer` interface (`accounts.ts` — one
-`send({to, subject, text})` method) against Azure Communication Services Email or
-any SMTP provider, and passing it to `new Accounts({...})` instead of
-`LogMailer`. `/auth/config` reports `codesInResponse: false` once you have, and
-`devCode` stops being returned. Until then, treat the deployed relay as private
-to people you trust, or keep it off the public internet.
+Setting `ACS_CONNECTION_STRING` and `ACS_SENDER_ADDRESS` swaps in `AcsMailer`,
+and `startEmail` then withholds the code — the only way to learn it is to own
+the mailbox. Check which one is live without reading any logs:
 
-**2. One replica, and that is a design constraint.** Workspaces, rooms, live
-sockets and meeting state live in memory, flushed to three JSON files; nothing is
-shared between processes. Two replicas would be two relays that disagree. Do not
+```bash
+curl -s https://<fqdn>/auth/config     # codesInResponse: false  <- real mail
+```
+
+Provisioning the Azure side, all free to create and billed per message (about
+$0.00025 each, so a rounding error for a team):
+
+```bash
+az communication email create --name stead-email -g stead-rg \
+  --location global --data-location UnitedStates
+az communication email domain create --domain-name AzureManagedDomain \
+  --email-service-name stead-email -g stead-rg --location global \
+  --domain-management AzureManaged
+az communication create --name stead-comms -g stead-rg --location global \
+  --data-location UnitedStates --linked-domains "<domain resource id>"
+```
+
+The Azure-managed domain needs no DNS and is rate limited, which suits a team
+and not a mailing list. Sending from your own domain means creating the domain
+with `--domain-management CustomerManaged` and adding the SPF and DKIM records
+it asks for.
+
+Delivery is asynchronous, so a mistyped address still answers `sent: true` and
+bounces quietly later. That is deliberate — the endpoint must never reveal
+whether an address is registered, or it becomes a way to enumerate the team.
+
+## One replica, and that is a design constraint
+
+Workspaces, rooms, live sockets and meeting state live in memory, flushed to
+three JSON files; nothing is shared between processes. Two replicas would be two relays that disagree. Do not
 turn on autoscale. For a team this is fine — the relay routes messages, it does
 not do the thinking. Scaling out would mean shared state (Redis or Postgres for
 the hub, a pub/sub fan-out for sockets) first.
 
-Also: back up `/data`. Losing `relay-accounts.json` locks everybody out.
+Also: back up the state directory. Losing `relay-accounts.json` locks everybody out.

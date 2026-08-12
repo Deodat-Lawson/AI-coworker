@@ -13,6 +13,7 @@ import { WebSocketServer } from 'ws';
 
 import { Accounts, LogMailer } from './accounts.js';
 import { AuthHttp } from './auth-http.js';
+import { acsMailerFromEnv } from './mailer-acs.js';
 import { Relay } from './relay.js';
 
 const PORT = Number(process.env.PORT ?? process.env.AI_COWORKER_PORT ?? 8787);
@@ -35,11 +36,24 @@ function log(message: string): void {
 
 const relayName = process.env.AI_COWORKER_RELAY_NAME ?? 'Stead';
 
+/**
+ * Real mail when ACS is configured, the log otherwise. This is the difference
+ * between a relay anyone can sign into and one where a code only reaches the
+ * mailbox it was addressed to — `startEmail` hands the code back in its own
+ * response only while the mailer is the log one.
+ */
+const mailer = acsMailerFromEnv(log) ?? new LogMailer(log);
+if (!(mailer instanceof LogMailer)) log('mail: Azure Communication Services');
+else if (AUTH_MODE === 'required') {
+  log('WARNING: accounts are required but codes are printed here and returned by /auth/start.');
+  log('WARNING: set ACS_CONNECTION_STRING and ACS_SENDER_ADDRESS before exposing this relay.');
+}
+
 const accounts = new Accounts({
   statePath: ACCOUNT_FILE,
   relayName,
   log,
-  mailer: new LogMailer(log),
+  mailer,
 });
 
 const relay = new Relay({
