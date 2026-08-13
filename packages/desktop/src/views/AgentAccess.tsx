@@ -22,6 +22,7 @@ import {
 
 import type { MemoryApi, MemoryState } from '../../electron/memory-ipc.js';
 import type { AgentIsolationView } from '../../electron/ipc.js';
+import { connectorMeta } from '../components/connectors.js';
 import { Icon, type IconName } from '../components/icons.js';
 import { Field } from '../components/ui.js';
 import { api, unwrap, type WorkspaceView } from '../lib/api.js';
@@ -412,31 +413,6 @@ function KnowledgeReach({ agent, onSave }: { agent: WorkspaceAgent; onSave: Save
 // This computer
 // ---------------------------------------------------------------------------
 
-/** What each connector is, in the words somebody would recognise it by. */
-const CONNECTOR_META: Record<
-  string,
-  { label: string; icon: IconName; blurb: string; tool?: AgentToolKey }
-> = {
-  'claude-code': {
-    label: 'Claude Code',
-    icon: 'terminal',
-    blurb: 'Project memory and session notes from Claude Code on this machine.',
-    tool: 'computer_claude_code',
-  },
-  codex: {
-    label: 'Codex',
-    icon: 'code',
-    blurb: 'Threads and distilled memories kept by Codex.',
-    tool: 'computer_codex',
-  },
-  openclaw: { label: 'OpenClaw', icon: 'plug', blurb: 'MEMORY.md and daily notes from an OpenClaw workspace.' },
-  hermes: { label: 'Hermes', icon: 'brain', blurb: 'The memory and user files Hermes keeps.' },
-  folder: { label: 'Folder', icon: 'folder', blurb: 'Any folder holding memory files you point at.' },
-};
-
-function connectorMeta(kind: string) {
-  return CONNECTOR_META[kind] ?? { label: kind, icon: 'database' as IconName, blurb: '' };
-}
 
 function ComputerAccess({
   agent,

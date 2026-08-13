@@ -7,8 +7,10 @@ import type {
   MemoryView,
   SourceView,
 } from '../../electron/memory-ipc.js';
-import { agentMayUseSource, SOURCE_KIND_TOOLS } from '@ai-coworker/shared';
+import { agentMayUseSource, SOURCE_KIND_TOOLS, type DetectedSource } from '@ai-coworker/shared';
 
+import { connectorMeta, connectorRank } from '../components/connectors.js';
+import { Icon } from '../components/icons.js';
 import { api, type AppState } from '../lib/api.js';
 import { relative } from '../lib/format.js';
 
@@ -28,6 +30,33 @@ const SENSITIVITY_HELP: Record<string, string> = {
   restricted: 'You. Your manager is told it exists.',
   secret: 'You alone. It never leaves this machine.',
 };
+
+/**
+ * One card per tool, not one per detected directory.
+ *
+ * Claude Code alone reports a source per project, so the flat list this
+ * replaces could run to a dozen near-identical cards with nothing on them
+ * saying which tool they came from — the question "should I import Claude
+ * Code?" was unanswerable from the screen that asks it.
+ */
+function groupByConnector(sources: DetectedSource[]): [string, DetectedSource[]][] {
+  const groups = new Map<string, DetectedSource[]>();
+  for (const source of sources) {
+    const list = groups.get(source.kind);
+    if (list) list.push(source);
+    else groups.set(source.kind, [source]);
+  }
+  for (const list of groups.values()) {
+    // Whole-machine memory first, then projects by name: the global source is
+    // the one somebody means when they say "import Claude Code".
+    list.sort(
+      (a, b) =>
+        (a.scope === b.scope ? 0 : a.scope === 'global' ? -1 : 1) ||
+        (a.project ?? a.label).localeCompare(b.project ?? b.label),
+    );
+  }
+  return [...groups.entries()].sort(([a], [b]) => connectorRank(a) - connectorRank(b));
+}
 
 const EMPTY: MemoryState = {
   ready: false,
@@ -184,19 +213,68 @@ export default function Sources({ state }: { state: AppState }) {
       {memory.available.length > 0 ? (
         <>
           <h2>Found on this machine, not connected</h2>
-          {memory.available.map((source) => (
-            <div className="card" key={source.id}>
-              <div className="card-head">
-                <div>
-                  <div className="card-title">{source.label}</div>
-                  <div className="card-sub">{source.detail}</div>
+          <div className="connector-grid">
+            {groupByConnector(memory.available).map(([kind, found]) => {
+              const meta = connectorMeta(kind);
+              const items = found.reduce((n, s) => n + (s.itemsSeen ?? 0), 0);
+              const touched = found.reduce((t, s) => Math.max(t, s.lastModified ?? 0), 0);
+              return (
+                <div className="connector" key={kind}>
+                  <div className="connector-head">
+                    <span className="connector-glyph">
+                      <Icon name={meta.icon} size={18} />
+                    </span>
+                    <div className="connector-id">
+                      <div className="connector-name">{meta.label}</div>
+                      <div className="connector-blurb">{meta.blurb}</div>
+                    </div>
+                    <button
+                      className="tab active"
+                      disabled={busy}
+                      onClick={() =>
+                        void run(async () => {
+                          for (const s of found) {
+                            const result = await window.memory.connectSource(s.id);
+                            if (!result.ok) return result;
+                          }
+                          return { ok: true as const, value: undefined };
+                        }, `${meta.label} connected.`)
+                      }
+                    >
+                      {found.length > 1 ? `Connect all ${found.length}` : 'Connect'}
+                    </button>
+                  </div>
+
+                  {/* What you would actually be importing, before you commit to
+                      it: how much, from where, and how stale. */}
+                  <div className="connector-facts">
+                    {items ? <span>{items} memory files</span> : <span>nothing read yet</span>}
+                    {touched ? <span>· touched {relative(touched)}</span> : null}
+                    <span>· {found.length === 1 ? '1 location' : `${found.length} locations`}</span>
+                  </div>
+
+                  <div className="connector-list">
+                    {found.map((source) => (
+                      <div className="connector-item" key={source.id}>
+                        <span className={`scope-tag ${source.scope}`}>{source.scope}</span>
+                        <span className="connector-item-name" title={source.root}>
+                          {source.project ?? source.label}
+                        </span>
+                        <span className="connector-item-detail">{source.detail}</span>
+                        <button
+                          className="tab"
+                          disabled={busy}
+                          onClick={() => void run(() => window.memory.connectSource(source.id))}
+                        >
+                          Connect
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <button className="tab" disabled={busy} onClick={() => void run(() => window.memory.connectSource(source.id))}>
-                  Connect
-                </button>
-              </div>
-            </div>
-          ))}
+              );
+            })}
+          </div>
         </>
       ) : null}
 
@@ -308,13 +386,20 @@ function SourceRow({
   return (
     <div className="card">
       <div className="card-head">
-        <div>
-          <div className="card-title">{source.label}</div>
-          <div className="card-sub">
-            {source.memories} memories · {source.lastSyncAt ? `imported ${relative(source.lastSyncAt)}` : 'never imported'}
-            {source.lastResult?.errors.length ? ` · ${source.lastResult.errors.join('; ')}` : ''}
+        <div className="source-id">
+          {/* The same glyph the import list uses, so a source you connected is
+              recognisably the same thing you chose. */}
+          <span className="connector-glyph">
+            <Icon name={connectorMeta(source.kind).icon} size={18} />
+          </span>
+          <div>
+            <div className="card-title">{source.label}</div>
+            <div className="card-sub">
+              {source.memories} memories · {source.lastSyncAt ? `imported ${relative(source.lastSyncAt)}` : 'never imported'}
+              {source.lastResult?.errors.length ? ` · ${source.lastResult.errors.join('; ')}` : ''}
+            </div>
+            <div className="hint">{source.root}</div>
           </div>
-          <div className="hint">{source.root}</div>
         </div>
         <div className="row">
           <button className={`tab ${filtered ? 'active' : ''}`} onClick={onFilter}>

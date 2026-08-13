@@ -1248,6 +1248,21 @@ h2:first-of-type {
 .side-row.muted:hover:not(:disabled) {
   opacity: 0.85;
 }
+/* A row whose context menu is open is still the subject of that menu, but the
+   pointer left it to reach the menu — so :hover has already lapsed. Without
+   this the row you right-clicked drops back to resting while a menu about it
+   sits on screen, and a muted one drops back to 55% opacity: the faintest thing
+   on screen is the one being acted on. */
+.side-row.menu-open:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+.side-row.menu-open.active {
+  background: var(--active);
+}
+.side-row.muted.menu-open {
+  opacity: 0.85;
+}
 .side-icon {
   width: 16px;
   text-align: center;
@@ -3328,8 +3343,15 @@ button.linkish:hover:not(:disabled) {
   transition: opacity 0.1s ease;
 }
 .side-group:hover .side-group-actions,
+.side-group.menu-open .side-group-actions,
 .side-group-actions:focus-within {
   opacity: 1;
+}
+/* Same reasoning as .side-row.menu-open: the section head keeps its hover
+   treatment for as long as its own menu is up. */
+.side-group.menu-open .side-group-head {
+  background: var(--hover);
+  border-radius: 6px;
 }
 .side-group-action {
   display: flex;
@@ -5031,13 +5053,9 @@ button.linkish:hover:not(:disabled) {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.menu-label {
-  padding: 6px 10px 3px;
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-faint);
-}
+/* .menu-label is defined once, with the context menus. A second copy lived here
+   and won by being later in the file, which quietly cost the header its
+   font-weight everywhere — including in the context menus that define it. */
 .menu-search {
   margin: 2px 4px 6px;
   width: calc(100% - 8px);
@@ -5261,4 +5279,113 @@ button.task-due.none:focus-visible {
 }
 .list-form .swatches {
   justify-items: start;
+}
+
+/* --- connectors: what is on this machine, and what importing it would mean --- */
+
+/* One card per tool rather than one per detected directory. Claude Code alone
+   reports a source per project, and a flat list of those says nothing about
+   which tool they came from — which is the only question this screen exists to
+   answer. */
+.connector-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+.connector {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-raised);
+  padding: 12px 14px;
+}
+.connector-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.connector-glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border-radius: 9px;
+  background: var(--bg-input);
+  color: var(--text-dim);
+}
+.connector-id {
+  flex: 1;
+  min-width: 0;
+}
+.connector-name {
+  font-weight: 700;
+}
+.connector-blurb {
+  font-size: 12.5px;
+  color: var(--text-faint);
+  line-height: 1.4;
+}
+.connector-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 9px 0 2px;
+  font-size: 12px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.connector-list {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.connector-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.connector-item:last-child {
+  border-bottom: none;
+}
+.connector-item-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 40%;
+}
+.connector-item-detail {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-faint);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Whether a source is the whole machine or one project changes what importing
+   it means, so it is a label rather than something to infer from a path. */
+.scope-tag {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--bg-input);
+  color: var(--text-faint);
+}
+.scope-tag.global {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+.source-id {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
 }

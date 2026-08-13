@@ -292,6 +292,10 @@ export default function ChannelSidebar({
             onOpenChannel={onOpenChannel}
             onChannelMenu={(channelId, x, y) => setMenu({ kind: 'channel', channelId, x, y })}
             onSectionMenu={(x, y) => setMenu({ kind: 'section', sectionId: group.id, x, y })}
+            // Which row the open menu belongs to. The pointer has left it by
+            // the time the menu is up, so hover cannot say this.
+            menuChannelId={menu?.kind === 'channel' ? menu.channelId : null}
+            menuOnSection={menu?.kind === 'section' && menu.sectionId === group.id}
             onDragChannel={(channelId) => setDrag({ channelId, overSection: null, overIndex: null })}
             onDragOver={(overIndex) =>
               setDrag((prev) => (prev ? { ...prev, overSection: group.id, overIndex } : prev))
@@ -445,6 +449,8 @@ function SectionGroup({
   onOpenChannel,
   onChannelMenu,
   onSectionMenu,
+  menuChannelId,
+  menuOnSection,
   onDragChannel,
   onDragOver,
   onDrop,
@@ -463,6 +469,8 @@ function SectionGroup({
   onOpenChannel: (channelId: string) => void;
   onChannelMenu: (channelId: string, x: number, y: number) => void;
   onSectionMenu: (x: number, y: number) => void;
+  menuChannelId: string | null;
+  menuOnSection: boolean;
   onDragChannel: (channelId: string) => void;
   onDragOver: (index: number) => void;
   onDrop: (index: number) => void;
@@ -488,7 +496,7 @@ function SectionGroup({
 
   return (
     <div
-      className={`side-group ${isDropTarget ? 'drop-target' : ''}`}
+      className={`side-group ${isDropTarget ? 'drop-target' : ''} ${menuOnSection ? 'menu-open' : ''}`}
       onDragOver={(e) => {
         if (!drag) return;
         e.preventDefault();
@@ -557,6 +565,7 @@ function SectionGroup({
               done={view.channel.archived}
               dragging={drag?.channelId === view.channel.id}
               dropBefore={isDropTarget && drag?.overIndex === i}
+              menuOpen={menuChannelId === view.channel.id}
               onClick={() => onOpenChannel(view.channel.id)}
               onMenu={(x, y) => onChannelMenu(view.channel.id, x, y)}
               onDragStart={() => onDragChannel(view.channel.id)}
@@ -611,6 +620,7 @@ function ChannelRow({
   done,
   dragging,
   dropBefore,
+  menuOpen,
   onClick,
   onMenu,
   onDragStart,
@@ -624,6 +634,8 @@ function ChannelRow({
   done?: boolean;
   dragging?: boolean;
   dropBefore?: boolean;
+  /** This row's context menu is showing. Hover has already been lost to it. */
+  menuOpen?: boolean;
   onClick: () => void;
   onMenu: (x: number, y: number) => void;
   onDragStart: () => void;
@@ -642,6 +654,7 @@ function ChannelRow({
         muted || done ? 'muted' : '',
         dragging ? 'dragging' : '',
         dropBefore ? 'drop-before' : '',
+        menuOpen ? 'menu-open' : '',
       ]
         .filter(Boolean)
         .join(' ')}
