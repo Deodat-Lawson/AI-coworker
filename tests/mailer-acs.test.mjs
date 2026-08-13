@@ -128,3 +128,31 @@ test('env builds a mailer only when both halves are present', () => {
     }
   }
 });
+
+test('nothing about the message reaches the log', async () => {
+  // The subject is `<code> is your <relay> code`. A log line quoting it puts
+  // every confirmation code in the platform's log store.
+  const lines = [];
+  const mailer = new AcsMailer({
+    connectionString: `endpoint=https://x.communication.azure.com;accesskey=${KEY}`,
+    senderAddress: 'DoNotReply@example.azurecomm.net',
+    log: (m) => lines.push(m),
+  });
+
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response('', { status: 202 });
+  try {
+    await mailer.send({
+      to: 'someone@example.com',
+      subject: '424242 is your Stead code',
+      text: 'Your confirmation code is 424242.',
+    });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+
+  const joined = lines.join('\n');
+  assert.ok(lines.length > 0, 'it should still say something happened');
+  assert.doesNotMatch(joined, /424242/, 'the code must not be logged');
+  assert.doesNotMatch(joined, /someone@example\.com/, 'the address must not be logged');
+});

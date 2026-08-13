@@ -143,7 +143,13 @@ export class AcsMailer implements Mailer {
       }
       // 202 with an Operation-Location; delivery is asynchronous from here, and
       // polling it would not change what we tell the caller either way.
-      this.log(`mail accepted by ACS for delivery (${mail.subject})`);
+      //
+      // Nothing about the message goes in this line. The subject carries the
+      // confirmation code — `<code> is your <relay> code` — so logging it puts
+      // every code in the platform's log store, where anyone who can read logs
+      // can sign in as anyone. That is the exact hole this class exists to
+      // close, reopened one rung further down.
+      this.log('mail accepted by ACS for delivery');
     } finally {
       clearTimeout(timer);
     }

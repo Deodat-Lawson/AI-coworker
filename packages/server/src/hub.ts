@@ -567,6 +567,12 @@ export class WorkspaceHub {
     });
     this.defaultWorkspaceId = record.workspace.id;
     this.options.log(`created default workspace "${record.workspace.name}"`);
+    // Write it out now rather than waiting for the first mutation. Until
+    // somebody joins or posts, nothing else calls save(), so a relay nobody has
+    // used yet reinvents this workspace — with a new id — on every restart, and
+    // anything that remembered the old id is pointing at a workspace that no
+    // longer exists.
+    this.save();
   }
 
   private newWorkspace(input: {
