@@ -88,6 +88,9 @@ interface Props {
   onOpenChannel: (channelId: string) => void;
   onMessage: (address: string) => void;
   onOpenKnowledge: () => void;
+  /** Open the sign-in screen. Reachable from here because this card is the
+      only place that tells you an account is missing. */
+  onSignIn: () => void;
 }
 
 export default function Settings({
@@ -98,6 +101,7 @@ export default function Settings({
   onOpenChannel,
   onMessage,
   onOpenKnowledge,
+  onSignIn,
 }: Props) {
   const groups = [...new Set(PANES.map((p) => p.group))];
 
@@ -126,7 +130,7 @@ export default function Settings({
           form here rather than leaving the last workspace's values in the
           boxes. */}
       <div className="settings-pane" key={workspace?.workspace.id ?? 'none'}>
-        {pane === 'account' ? <AccountPane state={state} workspace={workspace} /> : null}
+        {pane === 'account' ? <AccountPane state={state} workspace={workspace} onSignIn={onSignIn} /> : null}
         {pane === 'agent' ? <AgentAccess workspace={workspace} /> : null}
         {pane === 'sidebar' ? <SidebarPane workspace={workspace} /> : null}
         {pane === 'brain' ? <BrainPane state={state} /> : null}
@@ -197,7 +201,15 @@ function NoWorkspace() {
 // You
 // ---------------------------------------------------------------------------
 
-function AccountPane({ state, workspace }: { state: AppState; workspace: WorkspaceView | undefined }) {
+function AccountPane({
+  state,
+  workspace,
+  onSignIn,
+}: {
+  state: AppState;
+  workspace: WorkspaceView | undefined;
+  onSignIn: () => void;
+}) {
   const profile = state.profile!;
   const [displayName, setDisplayName] = useState(profile.displayName);
   const [title, setTitle] = useState(profile.title);
@@ -242,11 +254,17 @@ function AccountPane({ state, workspace }: { state: AppState; workspace: Workspa
             />
           </>
         ) : (
-          <p className="card-sub" style={{ marginTop: 0 }}>
-            This app is running without an account: the relay takes your agent address at face
-            value, which is only safe on a network where everybody already is. Point it at a relay
-            with accounts and sign in to fix that.
-          </p>
+          <>
+            <p className="card-sub" style={{ marginTop: 0 }}>
+              This app is running without an account. On a relay that requires one — which is any
+              relay reachable from outside your own network — nothing will connect until you sign
+              in, including creating or joining a workspace.
+            </p>
+            <p className="hint">Relay: {state.connection.relayUrl || 'none set'}</p>
+            <button className="tab active" onClick={onSignIn}>
+              Sign in
+            </button>
+          </>
         )}
       </div>
 

@@ -51,6 +51,9 @@ export default function App() {
   const [wsMenu, setWsMenu] = useState(false);
   const [searching, setSearching] = useState(false);
   const [demoSetup, setDemoSetup] = useState(false);
+  /** Signing in again after setup. `state.ready` is true by then, so the front
+      door below is closed — without this there is no way back to it. */
+  const [signingIn, setSigningIn] = useState(false);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   /** Workspaces whose agent has been introduced in this session. */
   const [metAgents, setMetAgents] = useState<string[]>([]);
@@ -336,6 +339,10 @@ export default function App() {
     );
   }
 
+  if (signingIn && !state.account) {
+    return <SignUp state={state} onUseDemoPersona={() => setDemoSetup(true)} onBack={() => setSigningIn(false)} />;
+  }
+
   if (!state.ready) {
     // Signing in is the front door; the demo personas are behind it, because a
     // persona is a thing you reach for deliberately rather than the first choice
@@ -442,6 +449,7 @@ export default function App() {
             workspace={workspace}
             pane={settingsPane}
             onPane={setSettingsPane}
+            onSignIn={() => setSigningIn(true)}
             onOpenChannel={(channelId) =>
               workspace && openChannel(workspace.workspace.id, channelId)
             }

@@ -57,6 +57,7 @@ import {
   THEME_BACKGROUNDS,
   agentMay,
   agentSourceScope,
+  DEFAULT_RELAY_URL,
   describeAgentReach,
   dueLabel,
   emptyStatus,
@@ -101,7 +102,7 @@ import type {
 import { relayAuth, type AuthAccount, type PendingInvitation, type WelcomeWorkspace } from './auth-client.js';
 import { MEMORY_CHANNELS, buildMemoryState, registerMemoryIpc } from './memory-ipc.js';
 
-const DEFAULT_RELAY = process.env.AI_COWORKER_RELAY || 'ws://localhost:8787';
+const DEFAULT_RELAY = process.env.AI_COWORKER_RELAY || DEFAULT_RELAY_URL;
 
 // --- identity ----------------------------------------------------------------
 // Kept in step with electron-builder's `productName` and `appId` in package.json.
@@ -267,6 +268,23 @@ function applyAppearance(): void {
  */
 function defaultKnowledgeDir(): string {
   return path.join(app.getPath('home'), 'Stead', 'KnowledgeBase');
+}
+
+/**
+ * Why the socket is not open, in the terms that decide what to do about it.
+ *
+ * "Not connected to a relay" was true and useless: the overwhelmingly common
+ * cause is a relay that requires an account, refusing a socket that has no
+ * session — which reads as a network problem and is not one. Saying so is the
+ * difference between someone signing in and someone re-typing a URL that was
+ * right all along.
+ */
+function notConnectedReason(): string {
+  const url = (config.relayUrl || DEFAULT_RELAY).trim();
+  if (!knowledge?.session(url)?.token) {
+    return `Not signed in to ${url}. Open Settings → Account → Sign in; a relay that requires an account refuses everything else until you do.`;
+  }
+  return `Not connected to ${url}. The relay is unreachable or still starting.`;
 }
 
 /** The pre-`~/Stead` location, still on disk for anyone upgrading. */
@@ -1536,10 +1554,10 @@ function registerIpc(): void {
   });
 
   handle<[Parameters<PersonalAgent['createWorkspace']>[0]], void>('ws:create', (input) => {
-    if (!requireAgent().createWorkspace(input)) throw new Error('Not connected to a relay.');
+    if (!requireAgent().createWorkspace(input)) throw new Error(notConnectedReason());
   });
   handle<[{ code?: string; slug?: string; relayUrl?: string }], void>('ws:join', (input) => {
-    if (!requireAgent().joinWorkspace(input)) throw new Error('Not connected to a relay.');
+    if (!requireAgent().joinWorkspace(input)) throw new Error(notConnectedReason());
   });
   handle<[string], void>('ws:leave', (workspaceId) => {
     requireAgent().leaveWorkspace(workspaceId);
@@ -1586,7 +1604,7 @@ function registerIpc(): void {
       // Asking to join a workspace on a relay we are not on yet means dialling
       // it first, exactly as joining by code does.
       if (relayUrl) await requireAgent().network.add(relayUrl);
-      if (!requireAgent().requestToJoin(slug, message)) throw new Error('Not connected to a relay.');
+      if (!requireAgent().requestToJoin(slug, message)) throw new Error(notConnectedReason());
     },
   );
   handle<[string, string, boolean, WorkspaceRole | undefined], void>(

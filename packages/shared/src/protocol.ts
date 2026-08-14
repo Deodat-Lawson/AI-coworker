@@ -8,6 +8,18 @@
  * agents — the relay never reads a knowledge base and never summarizes anything.
  */
 
+/**
+ * The relay a fresh install talks to.
+ *
+ * It used to be `ws://localhost:8787`, which is only right for somebody running
+ * a relay on the same machine — for everybody else the app opened onto a dead
+ * socket and said "not connected" without saying what to connect to.
+ *
+ * Override with `AI_COWORKER_RELAY` to point a build at your own relay; the
+ * sign-in screen also takes one directly, and it is stored per install.
+ */
+export const DEFAULT_RELAY_URL = 'wss://stead-relay-aurea.azurewebsites.net';
+
 import type {
   AgendaItem,
   AgentAddress,

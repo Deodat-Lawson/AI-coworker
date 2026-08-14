@@ -1,3 +1,4 @@
+import { DEFAULT_RELAY_URL } from '@ai-coworker/shared';
 /**
  * Signing up, in the order Slack asks.
  *
@@ -95,12 +96,16 @@ function CodeInput({
 export default function SignUp({
   state,
   onUseDemoPersona,
+  onBack,
 }: {
   state: AppState;
   onUseDemoPersona: () => void;
+  /** Present only when this was reached deliberately from an app that is
+      already set up — during first-run there is nothing behind it. */
+  onBack?: () => void;
 }) {
   const [step, setStep] = useState<Step>('email');
-  const [relayUrl, setRelayUrl] = useState(state.connection.relayUrl || 'ws://localhost:8787');
+  const [relayUrl, setRelayUrl] = useState(state.connection.relayUrl || DEFAULT_RELAY_URL);
   const [relayName, setRelayName] = useState('');
   const [codesInResponse, setCodesInResponse] = useState(false);
   const [email, setEmail] = useState('');
@@ -335,6 +340,15 @@ export default function SignUp({
                 Sign in with it instead
               </button>
             </p>
+            {onBack ? (
+              <p className="hint">
+                <button className="linkish" onClick={onBack}>
+                  Back to the app
+                </button>{' '}
+                — your knowledge base is already set up; signing in only adds an account to the
+                relay.
+              </p>
+            ) : null}
             <p className="hint">
               Just looking around?{' '}
               <button className="linkish" onClick={onUseDemoPersona}>
