@@ -251,9 +251,80 @@ function applyAppearance(): void {
   mainWindow?.setBackgroundColor(THEME_BACKGROUNDS[theme]);
 }
 
+/**
+ * Where a knowledge base goes when nobody has chosen otherwise: `~/Stead/KnowledgeBase`.
+ *
+ * It used to be `<userData>/workspace`, which was wrong twice over. "Workspace"
+ * is the shared, Slack-style space on the relay — the opposite of this, which is
+ * the private local store nobody else can read. And userData is where Electron
+ * keeps caches, cookies and code-cache: regenerable things, and precisely the
+ * directory uninstaller tools delete wholesale when an app is dragged to the
+ * Trash. Irreplaceable data does not belong in the folder designed to be
+ * disposable.
+ *
+ * `~/Stead` is visible, obviously the person's own, outside any uninstaller's
+ * reach, and backed up by Time Machine without anybody opting in.
+ */
 function defaultKnowledgeDir(): string {
-  // Folder name kept from an earlier release so upgrades keep their data.
+  return path.join(app.getPath('home'), 'Stead', 'KnowledgeBase');
+}
+
+/** The pre-`~/Stead` location, still on disk for anyone upgrading. */
+function legacyKnowledgeDir(): string {
   return path.join(app.getPath('userData'), 'workspace');
+}
+
+/**
+ * Move a knowledge base out of userData, once.
+ *
+ * Copy, verify, then remove — never a rename straight across. A rename that
+ * fails halfway leaves one broken half; this leaves two good copies and a
+ * config still pointing at the original, which is the failure everybody can
+ * recover from. The old directory only goes once the new one has been read back
+ * and found to hold the same files.
+ */
+async function relocateKnowledgeBase(): Promise<void> {
+  const from = config.knowledgeDir;
+  if (!from) return;
+  // Only ever move our own old default. A folder somebody chose is theirs.
+  if (path.resolve(from) !== path.resolve(legacyKnowledgeDir())) return;
+
+  const to = defaultKnowledgeDir();
+  try {
+    if (!(await fs.stat(from).catch(() => null))?.isDirectory()) return;
+    if (await fs.stat(to).catch(() => null)) {
+      // Something is already there. Adopting it silently could bury either
+      // side, so leave both alone and keep using the old one.
+      console.warn(`knowledge base: ${to} already exists; leaving ${from} where it is`);
+      return;
+    }
+
+    const before = await countFilesUnder(from);
+    await fs.mkdir(path.dirname(to), { recursive: true });
+    await fs.cp(from, to, { recursive: true });
+
+    const after = await countFilesUnder(to);
+    if (after !== before) {
+      throw new Error(`copied ${after} of ${before} files`);
+    }
+
+    config.knowledgeDir = to;
+    await saveConfig();
+    // Config is committed and the copy is verified: only now is the original
+    // redundant rather than the only copy.
+    await fs.rm(from, { recursive: true, force: true });
+    console.log(`knowledge base moved to ${to} (${before} files)`);
+  } catch (err) {
+    console.error(`knowledge base: leaving it at ${from} — ${(err as Error).message}`);
+  }
+}
+
+async function countFilesUnder(dir: string): Promise<number> {
+  let count = 0;
+  for (const entry of await fs.readdir(dir, { withFileTypes: true, recursive: true })) {
+    if (entry.isFile()) count++;
+  }
+  return count;
 }
 
 /**
@@ -1937,6 +2008,9 @@ app.whenReady().then(async () => {
   config = await loadConfig();
   const forced = devOption('AI_COWORKER_WORKSPACE');
   if (forced) config.knowledgeDir = forced;
+  // Before anything opens the knowledge base, so nothing is writing into the
+  // directory being copied out from under it.
+  if (!forced) await relocateKnowledgeBase();
   registerIpc();
   createWindow();
   if (config.knowledgeDir) {
